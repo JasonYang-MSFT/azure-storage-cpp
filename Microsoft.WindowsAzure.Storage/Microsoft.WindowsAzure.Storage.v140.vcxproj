@@ -155,6 +155,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="includes\wascore\functors.h" />
     <ClInclude Include="includes\wascore\protocol_json.h" />
     <ClInclude Include="includes\was\auth.h" />
     <ClInclude Include="includes\was\blob.h" />
@@ -210,6 +211,7 @@
     <ClCompile Include="src\cloud_table.cpp" />
     <ClCompile Include="src\cloud_table_client.cpp" />
     <ClCompile Include="src\constants.cpp" />
+    <ClCompile Include="src\functors.cpp" />
     <ClCompile Include="src\hashing.cpp" />
     <ClCompile Include="src\logging.cpp" />
     <ClCompile Include="src\mime_multipart_helper.cpp" />
