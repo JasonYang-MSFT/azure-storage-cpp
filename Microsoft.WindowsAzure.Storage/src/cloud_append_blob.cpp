@@ -19,7 +19,7 @@
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
 #include "wascore/blobstreams.h"
-
+#include "wascore/functor_request.h"
 namespace azure { namespace storage {
 
     pplx::task<void> cloud_append_blob::create_or_replace_async(const access_condition& condition, const blob_request_options& options, operation_context context)
@@ -31,7 +31,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::put_append_blob, *properties, metadata(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_put_append_blob_request_builder(*properties, metadata(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties](const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -65,7 +65,7 @@ namespace azure { namespace storage {
         return core::istream_descriptor::create(block_data, needs_md5).then([command, context, content_md5, modified_options, condition] (core::istream_descriptor request_body) -> pplx::task<int64_t>
         {
             const utility::string_t& md5 = content_md5.empty() ? request_body.content_md5() : content_md5;
-            command->set_build_request(std::bind(protocol::append_block, md5, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			command->set_build_request(functor::blob_append_block_request_builder(md5, condition));
             command->set_request_body(request_body);
             return core::executor<int64_t>::execute_async(command, modified_options, context);
         });

@@ -20,6 +20,7 @@
 #include "wascore/protocol_xml.h"
 #include "wascore/util.h"
 #include "was/queue.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -48,7 +49,7 @@ namespace azure { namespace storage {
 
         auto instance = std::make_shared<cloud_queue_client>(*this);
         std::shared_ptr<core::storage_command<queue_result_segment>> command = std::make_shared<core::storage_command<queue_result_segment>>(uri);
-        command->set_build_request(std::bind(protocol::list_queues, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_list_queues_request_builder());
         command->set_authentication_handler(authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary, token.target_location());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<queue_result_segment>, queue_result_segment(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));

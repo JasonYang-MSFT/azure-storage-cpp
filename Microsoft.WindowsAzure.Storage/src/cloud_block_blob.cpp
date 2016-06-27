@@ -19,6 +19,7 @@
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
 #include "wascore/blobstreams.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -36,7 +37,7 @@ namespace azure { namespace storage {
         return core::istream_descriptor::create(block_data, needs_md5, std::numeric_limits<utility::size64_t>::max(), protocol::max_block_size).then([command, context, block_id, content_md5, modified_options, condition](core::istream_descriptor request_body) -> pplx::task<void>
         {
             const utility::string_t& md5 = content_md5.empty() ? request_body.content_md5() : content_md5;
-            command->set_build_request(std::bind(protocol::put_block, block_id, md5, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			command->set_build_request(functor::blob_put_block_request_builder(block_id, md5, condition));
             command->set_request_body(request_body);
             return core::executor<void>::execute_async(command, modified_options, context);
         });
@@ -64,7 +65,7 @@ namespace azure { namespace storage {
         });
         return core::istream_descriptor::create(stream, needs_md5).then([command, properties, this, context, modified_options, condition] (core::istream_descriptor request_body) -> pplx::task<void>
         {
-            command->set_build_request(std::bind(protocol::put_block_list, *properties, metadata(), request_body.content_md5(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			command->set_build_request(functor::blob_put_block_list_request_builder(*properties, metadata(), request_body.content_md5(), condition));
             command->set_request_body(request_body);
             return core::executor<void>::execute_async(command, modified_options, context);
         });
@@ -78,7 +79,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<std::vector<block_list_item>>>(uri());
-        command->set_build_request(std::bind(protocol::get_block_list, listing_filter, snapshot_time(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_get_block_list_request_builder(listing_filter, snapshot_time(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> std::vector<block_list_item>
@@ -185,7 +186,7 @@ namespace azure { namespace storage {
                     properties->set_content_md5(request_body.content_md5());
                 }
 
-                command->set_build_request(std::bind(protocol::put_block_blob, *properties, *metadata, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+				command->set_build_request(functor::blob_put_block_blob_request_builder(*properties, *metadata, condition));
                 command->set_request_body(request_body);
                 return core::executor<void>::execute_async(command, modified_options, context);
             });

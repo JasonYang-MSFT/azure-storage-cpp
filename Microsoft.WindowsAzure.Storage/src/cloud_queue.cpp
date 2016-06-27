@@ -21,6 +21,7 @@
 #include "wascore/protocol_xml.h"
 #include "wascore/resources.h"
 #include "was/queue.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -111,7 +112,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::add_message, message, time_to_live, initial_visibility_timeout, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_add_message_request_builder(message, time_to_live, initial_visibility_timeout));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::executor<void>::execute_async(command, modified_options, context);
@@ -132,7 +133,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<cloud_queue_message>> command = std::make_shared<core::storage_command<cloud_queue_message>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::get_messages, 1U, visibility_timeout, /* is_peek */ false, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_get_messages_request_builder(1U, visibility_timeout, /* is_peek */ false));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<cloud_queue_message>, cloud_queue_message(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_postprocess_response([] (const web::http::http_response& response, const request_result&, const core::ostream_descriptor&, operation_context context) -> pplx::task<cloud_queue_message>
@@ -173,7 +174,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<std::vector<cloud_queue_message>>> command = std::make_shared<core::storage_command<std::vector<cloud_queue_message>>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::get_messages, message_count, visibility_timeout, /* is_peek */ false, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_get_messages_request_builder(message_count, visibility_timeout, /* is_peek */ false));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<std::vector<cloud_queue_message>>, std::vector<cloud_queue_message>(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_postprocess_response([] (const web::http::http_response& response, const request_result&, const core::ostream_descriptor&, operation_context context) -> pplx::task<std::vector<cloud_queue_message>>
@@ -201,7 +202,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<cloud_queue_message>> command = std::make_shared<core::storage_command<cloud_queue_message>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::get_messages, 1U, std::chrono::seconds(0LL), /* is_peek */ true, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_get_messages_request_builder(1U, std::chrono::seconds(0LL), /* is_peek */ true));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<cloud_queue_message>, cloud_queue_message(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_postprocess_response([] (const web::http::http_response& response, const request_result&, const core::ostream_descriptor&, operation_context context) -> pplx::task<cloud_queue_message>
@@ -227,7 +228,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<std::vector<cloud_queue_message>>> command = std::make_shared<core::storage_command<std::vector<cloud_queue_message>>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::get_messages, message_count, std::chrono::seconds(0LL), /* is_peek */ true, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_get_messages_request_builder(message_count, std::chrono::seconds(0LL), /* is_peek */ true));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<std::vector<cloud_queue_message>>, std::vector<cloud_queue_message>(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_postprocess_response([] (const web::http::http_response& response, const request_result&, const core::ostream_descriptor&, operation_context context) -> pplx::task<std::vector<cloud_queue_message>>
@@ -276,7 +277,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_queue_message_uri(service_client(), *this, message);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri);
-        command->set_build_request(std::bind(protocol::update_message, message, visibility_timeout, update_content, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_update_message_request_builder(message, visibility_timeout, update_content));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([&message] (const web::http::http_response& response, const request_result& result, operation_context context) mutable
         {
@@ -293,7 +294,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_queue_message_uri(service_client(), *this, message);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri);
-        command->set_build_request(std::bind(protocol::delete_message, message, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_delete_message_request_builder(message));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::executor<void>::execute_async(command, modified_options, context);
@@ -304,7 +305,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(queue_message_uri());
-        command->set_build_request(std::bind(protocol::clear_messages, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_clear_messages_request_builder());//std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::executor<void>::execute_async(command, modified_options, context);
@@ -317,7 +318,7 @@ namespace azure { namespace storage {
         auto metadata = m_metadata;
         auto approximate_message_count = m_approximate_message_count;
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::download_queue_metadata, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_download_queue_metadata_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response([metadata, approximate_message_count](const web::http::http_response& response, const request_result& result, operation_context context)
@@ -334,7 +335,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::upload_queue_metadata, metadata(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_upload_queue_metadata_request_builder(metadata()));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::executor<void>::execute_async(command, modified_options, context);
@@ -345,7 +346,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<queue_permissions>> command = std::make_shared<core::storage_command<queue_permissions>>(uri());
-        command->set_build_request(std::bind(protocol::get_queue_acl, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_get_queue_acl_request_builder());//, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response(std::bind(protocol::preprocess_response<queue_permissions>, queue_permissions(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -368,7 +369,7 @@ namespace azure { namespace storage {
         concurrency::streams::istream stream(concurrency::streams::bytestream::open_istream(writer.write(permissions.policies())));
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::set_queue_acl, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_set_queue_acl_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::istream_descriptor::create(stream).then([command, context, modified_options](core::istream_descriptor request_body) -> pplx::task<void>
@@ -434,7 +435,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri());
-        command->set_build_request(std::bind(protocol::create_queue, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_create_queue_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([allow_conflict] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
         {
@@ -454,7 +455,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri());
-        command->set_build_request(std::bind(protocol::delete_queue, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_delete_queue_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([allow_not_found] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
         {
@@ -474,7 +475,7 @@ namespace azure { namespace storage {
         queue_request_options modified_options = get_modified_options(options);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri());
-        command->set_build_request(std::bind(protocol::download_queue_metadata, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::queue_download_queue_metadata_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(allow_secondary ? core::command_location_mode::primary_or_secondary : core::command_location_mode::primary_only);
         command->set_preprocess_response([] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool

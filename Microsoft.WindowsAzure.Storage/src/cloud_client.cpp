@@ -19,13 +19,14 @@
 #include "was/service_client.h"
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
     pplx::task<service_properties> cloud_client::download_service_properties_base_async(const request_options& modified_options, operation_context context) const
     {
         auto command = std::make_shared<core::storage_command<service_properties>>(base_uri());
-        command->set_build_request(std::bind(protocol::get_service_properties, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::get_service_properties());
         command->set_authentication_handler(authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response(std::bind(protocol::preprocess_response<service_properties>, service_properties(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -43,7 +44,7 @@ namespace azure { namespace storage {
         concurrency::streams::istream stream(concurrency::streams::bytestream::open_istream(writer.write(properties, includes)));
 
         auto command = std::make_shared<core::storage_command<void>>(base_uri());
-        command->set_build_request(std::bind(protocol::set_service_properties, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::set_service_properties());
         command->set_authentication_handler(authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::istream_descriptor::create(stream).then([command, context, modified_options] (core::istream_descriptor request_body) -> pplx::task<void>
@@ -56,7 +57,7 @@ namespace azure { namespace storage {
     pplx::task<service_stats> cloud_client::download_service_stats_base_async(const request_options& modified_options, operation_context context) const
     {
         auto command = std::make_shared<core::storage_command<service_stats>>(base_uri());
-        command->set_build_request(std::bind(protocol::get_service_stats, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::get_service_stats());
         command->set_authentication_handler(authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response(std::bind(protocol::preprocess_response<service_stats>, service_stats(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));

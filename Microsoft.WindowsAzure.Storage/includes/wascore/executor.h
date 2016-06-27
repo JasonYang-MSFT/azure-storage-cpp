@@ -25,6 +25,7 @@
 #include "streams.h"
 #include "was/auth.h"
 #include "wascore/resources.h"
+#include "wascore/functors.h"
 
 namespace azure { namespace storage { namespace core {
 
@@ -178,10 +179,11 @@ namespace azure { namespace storage { namespace core {
             m_calculate_response_body_md5 = value;
         }
 
-        void set_build_request(std::function<web::http::http_request(web::http::uri_builder, const std::chrono::seconds&, operation_context)> value)
-        {
-            m_build_request = value;
-        }
+		{
+		}
+
+		{
+		}
 
         void set_custom_sign_request(std::function<void(web::http::http_request &, operation_context)> value)
         {
