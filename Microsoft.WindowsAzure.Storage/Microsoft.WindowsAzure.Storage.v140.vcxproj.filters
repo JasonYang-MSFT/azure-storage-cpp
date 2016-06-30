@@ -102,6 +102,9 @@
     <ClInclude Include="includes\wascore\hashing.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="includes\wascore\functors.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\async_semaphore.cpp">
@@ -240,6 +243,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\functors.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -22,6 +22,7 @@
 #include "wascore/resources.h"
 #include "wascore/blobstreams.h"
 #include "wascore/util.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -150,7 +151,7 @@ namespace azure { namespace storage {
         auto copy_state = m_copy_state;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::get_blob_properties, snapshot_time(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_get_blob_properties_request_builder(snapshot_time(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response([properties, metadata, copy_state] (const web::http::http_response& response, const request_result& result, operation_context context)
@@ -172,7 +173,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::set_blob_metadata, metadata(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_set_blob_metadata_request_builder(metadata(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -191,7 +192,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::set_blob_properties, *properties, metadata(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_set_blob_properties_request_builder(*properties, metadata(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -210,7 +211,7 @@ namespace azure { namespace storage {
         modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::delete_blob, snapshots_option, snapshot_time(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_delete_blob_request_builder(snapshots_option, snapshot_time(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
 
         auto properties = m_properties;
@@ -271,7 +272,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
         
         auto command = std::make_shared<core::storage_command<utility::string_t>>(uri());
-        command->set_build_request(std::bind(protocol::lease_blob, protocol::header_value_lease_acquire, proposed_lease_id, duration, lease_break_period(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_lease_blob_request_builder(protocol::header_value_lease_acquire, proposed_lease_id, duration, lease_break_period(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> utility::string_t
         {
@@ -296,7 +297,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::lease_blob, protocol::header_value_lease_renew, utility::string_t(), lease_time(), lease_break_period(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_lease_blob_request_builder(protocol::header_value_lease_renew, utility::string_t(), lease_time(), lease_break_period(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -320,7 +321,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<utility::string_t>>(uri());
-        command->set_build_request(std::bind(protocol::lease_blob, protocol::header_value_lease_change, proposed_lease_id, lease_time(), lease_break_period(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_lease_blob_request_builder(protocol::header_value_lease_change, proposed_lease_id, lease_time(), lease_break_period(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> utility::string_t
         {
@@ -345,7 +346,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::lease_blob, protocol::header_value_lease_release, utility::string_t(), lease_time(), lease_break_period(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_lease_blob_request_builder(protocol::header_value_lease_release, utility::string_t(), lease_time(), lease_break_period(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -364,7 +365,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<std::chrono::seconds>>(uri());
-        command->set_build_request(std::bind(protocol::lease_blob, protocol::header_value_lease_break, utility::string_t(), lease_time(), break_period, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_lease_blob_request_builder(protocol::header_value_lease_break, utility::string_t(), lease_time(), break_period, condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> std::chrono::seconds
         {
@@ -565,7 +566,7 @@ namespace azure { namespace storage {
         auto copy_state = m_copy_state;
 
         auto command = std::make_shared<core::storage_command<bool>>(uri());
-        command->set_build_request(std::bind(protocol::get_blob_properties, snapshot_time(), access_condition(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_get_blob_properties_request_builder(snapshot_time(), access_condition()));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(primary_only ? core::command_location_mode::primary_only : core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response([properties, metadata, copy_state] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
@@ -594,7 +595,7 @@ namespace azure { namespace storage {
         auto copy_state = m_copy_state;
 
         auto command = std::make_shared<core::storage_command<utility::string_t>>(uri());
-        command->set_build_request(std::bind(protocol::copy_blob, source, source_condition, metadata(), destination_condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_copy_blob_request_builder(source, source_condition, metadata(), destination_condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties, copy_state] (const web::http::http_response& response, const request_result& result, operation_context context) -> utility::string_t
         {
@@ -622,7 +623,7 @@ namespace azure { namespace storage {
         modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::abort_copy_blob, copy_id, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_abort_copy_blob_request_builder(copy_id, condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::executor<void>::execute_async(command, modified_options, context);
@@ -641,7 +642,7 @@ namespace azure { namespace storage {
         auto resulting_metadata = snapshot_metadata->empty() ? m_metadata : snapshot_metadata;
 
         auto command = std::make_shared<core::storage_command<cloud_blob>>(uri());
-        command->set_build_request(std::bind(protocol::snapshot_blob, *snapshot_metadata, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::blob_snapshot_blob_request_builder(*snapshot_metadata, condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([snapshot_name, snapshot_container, resulting_metadata, properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> cloud_blob
         {

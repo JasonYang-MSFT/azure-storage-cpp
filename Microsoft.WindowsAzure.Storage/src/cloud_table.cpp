@@ -23,6 +23,7 @@
 #include "wascore/resources.h"
 #include "wascore/util.h"
 #include "was/table.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -108,7 +109,7 @@ namespace azure { namespace storage {
         bool allow_not_found = operation.operation_type() == table_operation_type::retrieve_operation;
 
         std::shared_ptr<core::storage_command<table_result>> command = std::make_shared<core::storage_command<table_result>>(uri);
-        command->set_build_request(std::bind(protocol::execute_operation, operation, modified_options.payload_format(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_operation_request_builder(operation, modified_options.payload_format()));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(operation.operation_type() == azure::storage::table_operation_type::retrieve_operation ? core::command_location_mode::primary_or_secondary : core::command_location_mode::primary_only);
         command->set_preprocess_response([allow_not_found] (const web::http::http_response& response, const request_result& result, operation_context context) -> table_result
@@ -196,7 +197,7 @@ namespace azure { namespace storage {
         Concurrency::streams::stringstreambuf response_buffer;
 
         std::shared_ptr<core::storage_command<std::vector<table_result>>> command = std::make_shared<core::storage_command<std::vector<table_result>>>(uri);
-        command->set_build_request(std::bind(protocol::execute_batch_operation, response_buffer, *this, operation, options.payload_format(), is_query, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_batch_operation_request_builder(response_buffer, *this, operation, options.payload_format(), is_query));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(is_query ? core::command_location_mode::primary_or_secondary : core::command_location_mode::primary_only);
         command->set_preprocess_response(std::bind(protocol::preprocess_response<std::vector<table_result>>, std::vector<table_result>(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -229,7 +230,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_table_uri(service_client(), *this, query, token);
 
         std::shared_ptr<core::storage_command<table_query_segment>> command = std::make_shared<core::storage_command<table_query_segment>>(uri);
-        command->set_build_request(std::bind(protocol::execute_query, modified_options.payload_format(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_query_request_builder(modified_options.payload_format()));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary, token.target_location());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<table_query_segment>, table_query_segment(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -307,7 +308,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_table_uri(service_client(), *this, /* create_table */ true);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri);
-        command->set_build_request(std::bind(protocol::execute_table_operation, *this, table_operation_type::insert_operation, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_table_operation_request_builder(*this, table_operation_type::insert_operation));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([allow_conflict] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
         {
@@ -328,7 +329,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_table_uri(service_client(), *this, false);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri);
-        command->set_build_request(std::bind(protocol::execute_table_operation, *this, table_operation_type::delete_operation, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_table_operation_request_builder(*this, table_operation_type::delete_operation));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([allow_not_found] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
         {
@@ -349,7 +350,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_table_uri(service_client(), *this, false);
 
         std::shared_ptr<core::storage_command<bool>> command = std::make_shared<core::storage_command<bool>>(uri);
-        command->set_build_request(std::bind(protocol::execute_table_operation, *this, table_operation_type::retrieve_operation, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_execute_table_operation_request_builder(*this, table_operation_type::retrieve_operation));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(allow_secondary ? core::command_location_mode::primary_or_secondary : core::command_location_mode::primary_only);
         command->set_preprocess_response([] (const web::http::http_response& response, const request_result& result, operation_context context) -> bool
@@ -371,7 +372,7 @@ namespace azure { namespace storage {
         storage_uri uri = protocol::generate_table_uri(service_client(), *this);
 
         std::shared_ptr<core::storage_command<table_permissions>> command = std::make_shared<core::storage_command<table_permissions>>(uri);
-        command->set_build_request(std::bind(protocol::get_table_acl, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_get_table_acl_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response(std::bind(protocol::preprocess_response<table_permissions>, table_permissions(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -395,7 +396,7 @@ namespace azure { namespace storage {
         concurrency::streams::istream stream(concurrency::streams::bytestream::open_istream(writer.write(permissions.policies())));
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri);
-        command->set_build_request(std::bind(protocol::set_table_acl, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(functor::table_set_table_acl_request_builder());
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         return core::istream_descriptor::create(stream).then([command, context, modified_options] (core::istream_descriptor request_body) -> pplx::task<void>

@@ -19,6 +19,7 @@
 #include "was/blob.h"
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -41,7 +42,7 @@ namespace azure { namespace storage {
         auto client = *this;
 
         auto command = std::make_shared<core::storage_command<container_result_segment>>(base_uri());
-        command->set_build_request(std::bind(protocol::list_containers, prefix, includes, max_results, token, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_list_containers_request_builder(prefix, includes, max_results, token));
         command->set_authentication_handler(authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary, token.target_location());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<container_result_segment>, container_result_segment(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));

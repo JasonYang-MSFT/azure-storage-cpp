@@ -19,6 +19,7 @@
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
 #include "wascore/blobstreams.h"
+#include "wascore/functor_request.h"
 
 namespace azure { namespace storage {
 
@@ -34,7 +35,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::put_page, range, page_write::clear, utility::string_t(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_put_page_request_builder(range, page_write::clear, utility::string_t(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -71,7 +72,7 @@ namespace azure { namespace storage {
             const utility::string_t& md5 = content_md5.empty() ? request_body.content_md5() : content_md5;
             auto end_offset = start_offset + request_body.length() - 1;
             page_range range(start_offset, end_offset);
-            command->set_build_request(std::bind(protocol::put_page, range, page_write::update, md5, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			command->set_build_request(functor::blob_put_page_request_builder(range, page_write::update, md5, condition));
             command->set_request_body(request_body);
             return core::executor<void>::execute_async(command, modified_options, context);
         });
@@ -156,7 +157,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::put_page_blob, size, sequence_number, *properties, metadata(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_put_page_blob_request_builder(size, sequence_number, *properties, metadata(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties, size] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -176,7 +177,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
         
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::resize_page_blob, size, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_resize_page_blob_request_builder(size, condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties, size] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -199,7 +200,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::set_page_blob_sequence_number, sequence_number, condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_set_page_blob_sequence_number_request_builder(sequence_number, condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -220,7 +221,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<std::vector<page_range>>>(uri());
-        command->set_build_request(std::bind(protocol::get_page_ranges, offset, length, snapshot_time(), condition, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+		command->set_build_request(functor::blob_get_page_ranges_request_builder(offset, length, snapshot_time(), condition));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary);
         command->set_preprocess_response([properties] (const web::http::http_response& response, const request_result& result, operation_context context) -> std::vector<page_range>

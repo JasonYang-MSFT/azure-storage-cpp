@@ -25,6 +25,7 @@
 #include "streams.h"
 #include "was/auth.h"
 #include "wascore/resources.h"
+#include "wascore/functors.h"
 
 namespace azure { namespace storage { namespace core {
 
@@ -178,10 +179,15 @@ namespace azure { namespace storage { namespace core {
             m_calculate_response_body_md5 = value;
         }
 
-        void set_build_request(std::function<web::http::http_request(web::http::uri_builder, const std::chrono::seconds&, operation_context)> value)
-        {
-            m_build_request = value;
-        }
+		void set_build_request(functor::request_builder value)
+		{
+			m_request_builder = std::move(value);
+		}
+
+		web::http::http_request build_request(web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+		{
+			return m_request_builder.build_request(uri_builder, timeout, context);
+		}
 
         void set_custom_sign_request(std::function<void(web::http::http_request &, operation_context)> value)
         {
@@ -237,7 +243,7 @@ namespace azure { namespace storage { namespace core {
         bool m_calculate_response_body_md5;
         command_location_mode m_location_mode;
 
-        std::function<web::http::http_request(web::http::uri_builder, const std::chrono::seconds&, operation_context)> m_build_request;
+		azure::storage::functor::request_builder m_request_builder;
         std::function<void(web::http::http_request&, operation_context)> m_sign_request;
         std::function<bool(utility::size64_t, operation_context)> m_recover_request;
 
@@ -370,7 +376,7 @@ namespace azure { namespace storage { namespace core {
                 // 1. Build request
                 instance->m_start_time = utility::datetime::utc_now();
                 instance->m_uri_builder = web::http::uri_builder(instance->m_command->m_request_uri.get_location_uri(instance->m_current_location));
-                instance->m_request = instance->m_command->m_build_request(instance->m_uri_builder, instance->m_request_options.server_timeout(), instance->m_context);
+                instance->m_request = instance->m_command->build_request(instance->m_uri_builder, instance->m_request_options.server_timeout(), instance->m_context);
                 instance->m_request_result = request_result(instance->m_start_time, instance->m_current_location);
 
                 if (logger::instance().should_log(instance->m_context, client_log_level::log_level_informational))
