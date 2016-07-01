@@ -691,7 +691,7 @@ SUITE(Core)
 
         azure::storage::account_shared_access_policy policy;
         policy.set_start(utility::datetime::utc_now());
-        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
+        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(90));
         policy.set_address_or_range(azure::storage::shared_access_policy::ip_address_or_range(_XPLATSTR("0.0.0.0"), _XPLATSTR("255.255.255.255")));
         policy.set_protocol(azure::storage::account_shared_access_policy::protocols::https_or_http);
         policy.set_service_type((azure::storage::account_shared_access_policy::service_types)0xF);
@@ -712,7 +712,7 @@ SUITE(Core)
 
         azure::storage::account_shared_access_policy policy;
         policy.set_start(utility::datetime::utc_now());
-        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
+        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(90));
         policy.set_address_or_range(azure::storage::shared_access_policy::ip_address_or_range(_XPLATSTR("0.0.0.0"), _XPLATSTR("255.255.255.255")));
         policy.set_protocol(azure::storage::account_shared_access_policy::protocols::https_or_http);
         policy.set_permissions(0xFF);
@@ -733,7 +733,7 @@ SUITE(Core)
 
         azure::storage::account_shared_access_policy policy;
         policy.set_start(utility::datetime::utc_now());
-        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
+        policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(90));
         policy.set_address_or_range(azure::storage::shared_access_policy::ip_address_or_range(_XPLATSTR("0.0.0.0"), _XPLATSTR("255.255.255.255")));
         policy.set_protocol(azure::storage::account_shared_access_policy::protocols::https_or_http);
         policy.set_permissions(0xFF);
