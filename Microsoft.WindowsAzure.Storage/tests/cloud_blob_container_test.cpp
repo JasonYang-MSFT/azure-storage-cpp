@@ -319,4 +319,33 @@ SUITE(Blob)
         stored_permissions = m_container.download_permissions(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
         CHECK(stored_permissions.policies().empty());
     }
+    
+    /// Test the blob name
+    TEST_FIXTURE(blob_test_base, random_blob_name)
+    {
+        // Initialize the chareset to generate random blob name.
+        std::vector<utility::char_t> charset;
+        for (int i = 0; i < std::numeric_limits<utility::char_t>::max(); ++i)
+        {
+            charset.push_back(utility::char_t(i));
+        }
+
+        for (int i = 0; i < 128; ++i)
+        {
+            utility::string_t blob_name = get_random_string(charset, 20);
+            azure::storage::cloud_block_blob blob = m_container.get_block_blob_reference(blob_name);
+            auto content = get_random_string(charset, 20);
+            blob.upload_text(content);
+
+            // list the container to get the blob just created.
+            auto listing = list_all_blobs(blob_name, azure::storage::blob_listing_details::all, 0, azure::storage::blob_request_options());
+            CHECK(listing.size() == 1);
+
+            // check the consistance of blob content.
+            auto download_content = blob.download_text();
+            CHECK(content == download_content);
+
+            blob.delete_blob();
+        }
+    }
 }
