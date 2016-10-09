@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <map>
+
 #include "cpprest/streams.h"
 
 #include "was/core.h"
@@ -104,5 +106,16 @@ namespace azure { namespace storage { namespace core {
     }
 
 #pragma endregion
+
+    class http_client_reusable
+    {
+    public:
+        WASTORAGE_API static web::http::client::http_client& get_http_client(const web::uri& uri);
+        WASTORAGE_API static web::http::client::http_client& get_http_client(const web::uri& uri, const web::http::client::http_client_config& config);
+
+    private:
+        WASTORAGE_API static std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_clients;
+        WASTORAGE_API static pplx::extensibility::reader_writer_lock_t m_mutex;
+    };
 
 }}} // namespace azure::storage::core

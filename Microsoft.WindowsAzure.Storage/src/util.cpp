@@ -447,4 +447,74 @@ namespace azure { namespace storage {  namespace core {
 
     }
 
+    std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::http_clients;
+    pplx::extensibility::reader_writer_lock_t http_client_reusable::m_mutex;
+
+    web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri)
+    {
+        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
+        utility::string_t key(uri.to_string());
+
+        auto iter = http_clients.find(key);
+        if (iter == http_clients.end())
+        {
+            auto http_client = std::make_shared<web::http::client::http_client>(uri);
+            http_clients[key] = http_client;
+            return *http_client;
+        }
+        else
+        {
+            return *iter->second;
+        }
+    }
+
+    web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri, const web::http::client::http_client_config& config)
+    {
+        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
+        utility::string_t key(uri.to_string());
+        key.append(config.proxy().address().to_string());
+        key.append(_XPLATSTR("/"));
+
+        if (config.proxy().is_default())
+        {
+            key.append(_XPLATSTR("/0/"));
+        }
+        else if (config.proxy().is_disabled())
+        {
+            key.append(_XPLATSTR("/1/"));
+        }
+        else if (config.proxy().is_auto_discovery())
+        {
+            key.append(_XPLATSTR("/2/"));
+        }
+        else if (config.proxy().is_specified())
+        {
+            key.append(_XPLATSTR("/3/"));
+        }
+
+        if (config.credentials().is_set())
+        {
+            key.append(config.credentials().username());
+            key.append(_XPLATSTR("/"));
+            // key.append(config.credentials().password());
+            // key.append(_XPLATSTR("/"));
+        }
+        key.append(utility::conversions::print_string(config.timeout().count()));
+        key.append(_XPLATSTR("/"));
+        key.append(utility::conversions::print_string(config.chunksize()));
+        key.append(_XPLATSTR("/"));
+
+        auto iter = http_clients.find(key);
+        if (iter == http_clients.end())
+        {
+            auto http_client = std::make_shared<web::http::client::http_client>(uri, config);
+            http_clients[key] = http_client;
+            return *http_client;
+        }
+        else
+        {
+            return *iter->second;
+        }
+    }
+
 }}} // namespace azure::storage::core
