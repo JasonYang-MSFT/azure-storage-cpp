@@ -442,7 +442,7 @@ namespace azure { namespace storage {
                             }
                             else if (smallest_offset > current_offset)
                             {
-                                throw std::exception("Out of order");
+                                throw std::runtime_error("Out of order");
                             }
                         }
                     }).then([&semaphore]()
