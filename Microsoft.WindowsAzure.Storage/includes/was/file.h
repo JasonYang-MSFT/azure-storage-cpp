@@ -3913,6 +3913,7 @@ namespace azure { namespace storage {
 
         void init(storage_credentials credentials);
         WASTORAGE_API pplx::task<bool> exists_async(bool primary_only, const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+        WASTORAGE_API pplx::task<void> download_range_to_stream_parallel_async(concurrency::streams::ostream target, utility::size64_t start_offset, utility::size64_t length, const file_access_condition& access_condition, const file_request_options& options, operation_context context) const;
 
         utility::string_t m_name;
         cloud_file_directory m_directory;
