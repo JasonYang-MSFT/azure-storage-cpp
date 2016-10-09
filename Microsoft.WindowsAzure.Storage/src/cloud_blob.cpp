@@ -22,6 +22,7 @@
 #include "wascore/resources.h"
 #include "wascore/blobstreams.h"
 #include "wascore/util.h"
+#include "wascore/async_semaphore.h"
 
 namespace azure { namespace storage {
 
@@ -395,6 +396,63 @@ namespace azure { namespace storage {
         auto metadata = m_metadata;
         auto copy_state = m_copy_state;
         const utility::string_t& current_snapshot_time = snapshot_time();
+
+        if (offset >= std::numeric_limits<utility::size64_t>::max())
+        {
+            this->download_attributes(condition, options, context);
+        }
+
+        if ((offset >= std::numeric_limits<utility::size64_t>::max() && properties->size() > protocol::max_block_size)
+            || (offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size))
+        {
+            return pplx::task_from_result().then([=]()
+            {
+                core::async_semaphore semaphore(options.parallelism_factor());
+                pplx::extensibility::reader_writer_lock_t mutex;
+                utility::size64_t source_offset = offset;
+                utility::size64_t source_length = length;
+
+                if (offset >= std::numeric_limits<utility::size64_t>::max())
+                {
+                    source_offset = 0;
+                    source_length = properties->size();
+                }
+
+                utility::size64_t smallest_offset = source_offset;
+                for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
+                {
+                    utility::size64_t current_length = protocol::max_block_size;
+                    if (current_offset + current_length > source_offset + source_length)
+                    {
+                        current_length = source_offset + source_length - current_offset;
+                    }
+                    semaphore.lock_async().then([this, &mutex, target, &smallest_offset, current_offset, current_length, condition, options, context]()
+                    {
+                        concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
+                        this->download_range_to_stream(buffer.create_ostream(), current_offset, current_length, condition, options, context);
+
+                        while(true)
+                        {
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            if (smallest_offset == current_offset)
+                            {
+                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
+                                smallest_offset += protocol::max_block_size;
+                                break;
+                            }
+                            else if (smallest_offset > current_offset)
+                            {
+                                throw std::exception("Out of order");
+                            }
+                        }
+                    }).then([&semaphore]()
+                    {
+                        semaphore.unlock();
+                    });
+                }
+                semaphore.wait_all_async().wait();
+            });
+        }
 
         std::shared_ptr<blob_download_info> download_info = std::make_shared<blob_download_info>();
         download_info->m_are_properties_populated = false;
