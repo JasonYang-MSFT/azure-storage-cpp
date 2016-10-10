@@ -452,9 +452,9 @@ namespace azure { namespace storage {  namespace core {
 
     web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri)
     {
-        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
         utility::string_t key(uri.to_string());
 
+        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
         auto iter = http_clients.find(key);
         if (iter == http_clients.end())
         {
@@ -470,41 +470,39 @@ namespace azure { namespace storage {  namespace core {
 
     web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri, const web::http::client::http_client_config& config)
     {
-        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
         utility::string_t key(uri.to_string());
-        key.append(_XPLATSTR("/"));
+        key.append(_XPLATSTR("#"));
         key.append(config.proxy().address().to_string());
-        key.append(_XPLATSTR("/"));
+        key.append(_XPLATSTR("#"));
 
         if (config.proxy().is_default())
         {
-            key.append(_XPLATSTR("/0/"));
+            key.append(_XPLATSTR("#0#"));
         }
         else if (config.proxy().is_disabled())
         {
-            key.append(_XPLATSTR("/1/"));
+            key.append(_XPLATSTR("#1#"));
         }
         else if (config.proxy().is_auto_discovery())
         {
-            key.append(_XPLATSTR("/2/"));
+            key.append(_XPLATSTR("#2#"));
         }
         else if (config.proxy().is_specified())
         {
-            key.append(_XPLATSTR("/3/"));
+            key.append(_XPLATSTR("#3#"));
         }
 
         if (config.credentials().is_set())
         {
             key.append(config.credentials().username());
-            key.append(_XPLATSTR("/"));
-            // key.append(config.credentials().password());
-            // key.append(_XPLATSTR("/"));
+            key.append(_XPLATSTR("#"));
         }
         key.append(utility::conversions::print_string(config.timeout().count()));
-        key.append(_XPLATSTR("/"));
+        key.append(_XPLATSTR("#"));
         key.append(utility::conversions::print_string(config.chunksize()));
-        key.append(_XPLATSTR("/"));
+        key.append(_XPLATSTR("#"));
 
+        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
         auto iter = http_clients.find(key);
         if (iter == http_clients.end())
         {
