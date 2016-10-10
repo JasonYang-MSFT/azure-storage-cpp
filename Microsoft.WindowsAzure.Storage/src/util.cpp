@@ -472,6 +472,7 @@ namespace azure { namespace storage {  namespace core {
     {
         pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
         utility::string_t key(uri.to_string());
+        key.append(_XPLATSTR("/"));
         key.append(config.proxy().address().to_string());
         key.append(_XPLATSTR("/"));
 
