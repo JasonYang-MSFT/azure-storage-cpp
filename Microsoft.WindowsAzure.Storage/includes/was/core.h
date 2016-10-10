@@ -778,6 +778,7 @@ namespace azure { namespace storage {
         utility::size64_t m_content_length;
         utility::string_t m_content_md5;
         utility::string_t m_etag;
+        bool m_request_server_encrypted;
         storage_extended_error m_extended_error;
     };
 
