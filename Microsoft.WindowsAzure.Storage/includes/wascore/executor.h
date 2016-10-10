@@ -450,7 +450,6 @@ namespace azure { namespace storage { namespace core {
                 }
 
                 // 5-6. Potentially upload data and get response
-                // web::http::client::http_client client(instance->m_request.request_uri().authority(), config);
                 web::http::client::http_client& client = core::http_client_reusable::get_http_client(instance->m_request.request_uri().authority(), config);
                 return client.request(instance->m_request).then([instance](pplx::task<web::http::http_response> get_headers_task) -> pplx::task<web::http::http_response>
                 {
