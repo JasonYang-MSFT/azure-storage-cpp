@@ -407,8 +407,8 @@ namespace azure { namespace storage {
         {
             return pplx::task_from_result().then([=]()
             {
-                core::async_semaphore semaphore(options.parallelism_factor());
-                pplx::extensibility::reader_writer_lock_t mutex;
+                auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
+                auto mutex = std::make_shared<pplx::extensibility::reader_writer_lock_t>();
                 utility::size64_t source_offset = offset;
                 utility::size64_t source_length = length;
 
@@ -418,7 +418,7 @@ namespace azure { namespace storage {
                     source_length = properties->size();
                 }
 
-                utility::size64_t smallest_offset = source_offset;
+                auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
                 for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
                 {
                     utility::size64_t current_length = protocol::max_block_size;
@@ -426,31 +426,31 @@ namespace azure { namespace storage {
                     {
                         current_length = source_offset + source_length - current_offset;
                     }
-                    semaphore.lock_async().then([this, &mutex, target, &smallest_offset, current_offset, current_length, condition, options, context]()
+                    semaphore->lock_async().then([this, mutex, target, smallest_offset, current_offset, current_length, condition, options, context]()
                     {
                         concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                         this->download_range_to_stream(buffer.create_ostream(), current_offset, current_length, condition, options, context);
 
                         while(true)
                         {
-                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                            if (smallest_offset == current_offset)
+                            pplx::extensibility::scoped_rw_lock_t guard(*mutex);
+                            if (*smallest_offset == current_offset)
                             {
                                 target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
-                                smallest_offset += protocol::max_block_size;
+                                *smallest_offset += protocol::max_block_size;
                                 break;
                             }
-                            else if (smallest_offset > current_offset)
+                            else if (*smallest_offset > current_offset)
                             {
                                 throw std::runtime_error("Out of order");
                             }
                         }
-                    }).then([&semaphore]()
+                    }).then([semaphore]()
                     {
-                        semaphore.unlock();
+                        semaphore->unlock();
                     });
                 }
-                semaphore.wait_all_async().wait();
+                return semaphore->wait_all_async();
             });
         }
 
