@@ -107,7 +107,7 @@ namespace azure { namespace storage { namespace core {
 
 #pragma endregion
 
-#ifndef WIN32
+#ifndef _WIN32
     class http_client_reusable
     {
     public:

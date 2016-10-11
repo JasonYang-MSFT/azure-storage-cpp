@@ -447,7 +447,7 @@ namespace azure { namespace storage {  namespace core {
 
     }
 
-#ifndef WIN32
+#ifndef _WIN32
     std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::s_http_clients;
     std::mutex http_client_reusable::s_mutex;
 

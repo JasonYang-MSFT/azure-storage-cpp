@@ -450,11 +450,11 @@ namespace azure { namespace storage { namespace core {
                 }
 
                 // 5-6. Potentially upload data and get response
-#ifdef WIN32
+#ifdef _WIN32
                 web::http::client::http_client client(instance->m_request.request_uri().authority(), config);
 #else
                 web::http::client::http_client& client = core::http_client_reusable::get_http_client(instance->m_request.request_uri().authority(), config);
-#endif // WIN32
+#endif // _WIN32
                 return client.request(instance->m_request).then([instance](pplx::task<web::http::http_response> get_headers_task) -> pplx::task<web::http::http_response>
                 {
                     // Headers are ready. It should be noted that http_client will
