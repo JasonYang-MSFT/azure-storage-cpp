@@ -447,19 +447,20 @@ namespace azure { namespace storage {  namespace core {
 
     }
 
-    std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::http_clients;
-    pplx::extensibility::reader_writer_lock_t http_client_reusable::m_mutex;
+#ifndef WIN32
+    std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::s_http_clients;
+    std::mutex http_client_reusable::s_mutex;
 
     web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri)
     {
         utility::string_t key(uri.to_string());
 
-        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
-        auto iter = http_clients.find(key);
-        if (iter == http_clients.end())
+        std::lock_guard<std::mutex> guard(s_mutex);
+        auto iter = s_http_clients.find(key);
+        if (iter == s_http_clients.end())
         {
             auto http_client = std::make_shared<web::http::client::http_client>(uri);
-            http_clients[key] = http_client;
+            s_http_clients[key] = http_client;
             return *http_client;
         }
         else
@@ -472,42 +473,27 @@ namespace azure { namespace storage {  namespace core {
     {
         utility::string_t key(uri.to_string());
         key.append(_XPLATSTR("#"));
-        key.append(config.proxy().address().to_string());
-        key.append(_XPLATSTR("#"));
-
-        if (config.proxy().is_default())
+        if (config.proxy().is_specified())
         {
-            key.append(_XPLATSTR("#0#"));
-        }
-        else if (config.proxy().is_disabled())
-        {
-            key.append(_XPLATSTR("#1#"));
-        }
-        else if (config.proxy().is_auto_discovery())
-        {
-            key.append(_XPLATSTR("#2#"));
-        }
-        else if (config.proxy().is_specified())
-        {
-            key.append(_XPLATSTR("#3#"));
-        }
-
-        if (config.credentials().is_set())
-        {
-            key.append(config.credentials().username());
+            key.append(_XPLATSTR("0#"));
+            key.append(config.proxy().address().to_string());
             key.append(_XPLATSTR("#"));
+        }
+        else
+        {
+            key.append(_XPLATSTR("1#"));
         }
         key.append(utility::conversions::print_string(config.timeout().count()));
         key.append(_XPLATSTR("#"));
         key.append(utility::conversions::print_string(config.chunksize()));
         key.append(_XPLATSTR("#"));
 
-        pplx::extensibility::scoped_rw_lock_t guard(m_mutex);
-        auto iter = http_clients.find(key);
-        if (iter == http_clients.end())
+        std::lock_guard<std::mutex> guard(s_mutex);
+        auto iter = s_http_clients.find(key);
+        if (iter == s_http_clients.end())
         {
             auto http_client = std::make_shared<web::http::client::http_client>(uri, config);
-            http_clients[key] = http_client;
+            s_http_clients[key] = http_client;
             return *http_client;
         }
         else
@@ -515,5 +501,6 @@ namespace azure { namespace storage {  namespace core {
             return *iter->second;
         }
     }
+#endif
 
 }}} // namespace azure::storage::core
