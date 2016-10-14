@@ -24,6 +24,8 @@
 #include "wascore/util.h"
 #include "wascore/async_semaphore.h"
 
+#include <condition_variable>
+
 namespace azure { namespace storage {
 
     cloud_blob::cloud_blob(storage_uri uri)
