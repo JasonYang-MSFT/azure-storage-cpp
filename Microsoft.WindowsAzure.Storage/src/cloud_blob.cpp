@@ -389,36 +389,31 @@ namespace azure { namespace storage {
 
     pplx::task<void> cloud_blob::download_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t offset, utility::size64_t length, const access_condition& condition, const blob_request_options& options, operation_context context)
     {
-        blob_request_options modified_options(options);
-        modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
-
-        auto properties = m_properties;
-        auto metadata = m_metadata;
-        auto copy_state = m_copy_state;
-        const utility::string_t& current_snapshot_time = snapshot_time();
-
         if (offset >= std::numeric_limits<utility::size64_t>::max())
         {
             this->download_attributes(condition, options, context);
         }
 
-        if ((offset >= std::numeric_limits<utility::size64_t>::max() && properties->size() > protocol::max_block_size)
+        if ((offset >= std::numeric_limits<utility::size64_t>::max() && this->m_properties->size() > protocol::max_block_size)
             || (offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size))
         {
-            return pplx::task_from_result().then([=]()
+            auto instance = std::make_shared<cloud_blob>(*this);
+            return pplx::task_from_result().then([instance, target, offset, length, condition, options, context]()
             {
                 auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
-                auto mutex = std::make_shared<pplx::extensibility::reader_writer_lock_t>();
+                pplx::extensibility::reader_writer_lock_t mutex;
                 utility::size64_t source_offset = offset;
                 utility::size64_t source_length = length;
 
                 if (offset >= std::numeric_limits<utility::size64_t>::max())
                 {
                     source_offset = 0;
-                    source_length = properties->size();
+                    source_length = instance->m_properties->size();
                 }
 
                 auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
+                auto condition_variable = std::make_shared<std::condition_variable>();
+                std::mutex  condition_variable_mutex;
                 for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
                 {
                     utility::size64_t current_length = protocol::max_block_size;
@@ -426,33 +421,47 @@ namespace azure { namespace storage {
                     {
                         current_length = source_offset + source_length - current_offset;
                     }
-                    semaphore->lock_async().then([this, mutex, target, smallest_offset, current_offset, current_length, condition, options, context]()
+                    semaphore->lock_async().then([instance, &mutex, condition_variable, &condition_variable_mutex, target, smallest_offset, current_offset, current_length, condition, options, context]()
                     {
                         concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
-                        this->download_range_to_stream(buffer.create_ostream(), current_offset, current_length, condition, options, context);
+                        auto segment_ostream = buffer.create_ostream();
+                        instance->download_range_to_stream(segment_ostream, current_offset, current_length, condition, options, context);
 
-                        while(true)
+                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                        condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
                         {
-                            pplx::extensibility::scoped_rw_lock_t guard(*mutex);
-                            if (*smallest_offset == current_offset)
-                            {
-                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
-                                *smallest_offset += protocol::max_block_size;
-                                break;
-                            }
-                            else if (*smallest_offset > current_offset)
-                            {
-                                throw std::runtime_error("Out of order");
-                            }
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            return *smallest_offset == current_offset;
+                        });
+                        if (*smallest_offset == current_offset)
+                        {
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
+                            segment_ostream.close();
+                            *smallest_offset += protocol::max_block_size;
                         }
+                        else if (*smallest_offset > current_offset)
+                        {
+                            throw std::runtime_error("Out of order");
+                        }
+
+                        condition_variable->notify_all();
                     }).then([semaphore]()
                     {
                         semaphore->unlock();
                     });
                 }
-                return semaphore->wait_all_async();
+                semaphore->wait_all_async().wait();
             });
         }
+
+        blob_request_options modified_options(options);
+        modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
+
+        auto properties = m_properties;
+        auto metadata = m_metadata;
+        auto copy_state = m_copy_state;
+        const utility::string_t& current_snapshot_time = snapshot_time();
 
         std::shared_ptr<blob_download_info> download_info = std::make_shared<blob_download_info>();
         download_info->m_are_properties_populated = false;
@@ -557,9 +566,9 @@ namespace azure { namespace storage {
 
             if (!download_info->m_are_properties_populated)
             {
-                properties->update_all(protocol::blob_response_parsers::parse_blob_properties(response), offset != std::numeric_limits<utility::size64_t>::max());
-                *metadata = protocol::parse_metadata(response);
-                *copy_state = protocol::response_parsers::parse_copy_state(response);
+                // properties->update_all(protocol::blob_response_parsers::parse_blob_properties(response), offset != std::numeric_limits<utility::size64_t>::max());
+                // *metadata = protocol::parse_metadata(response);
+                // *copy_state = protocol::response_parsers::parse_copy_state(response);
 
                 download_info->m_response_length = result.content_length();
                 download_info->m_response_md5 = result.content_md5();

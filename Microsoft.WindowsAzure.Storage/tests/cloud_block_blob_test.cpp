@@ -695,4 +695,35 @@ SUITE(Blob)
 
         m_context.set_response_received(std::function<void(web::http::http_request &, const web::http::http_response&, azure::storage::operation_context)>());
     }
+
+    TEST_FIXTURE(block_blob_test_base, parallel_download)
+    {
+        auto container = m_client.get_container_reference(_XPLATSTR("parallel"));
+        container.create_if_not_exists();
+
+        auto blob = container.get_block_blob_reference(_XPLATSTR("download"));
+
+        //blob.upload_text(content);
+        azure::storage::blob_request_options options;
+        options.set_parallelism_factor(50);
+        // blob.upload_from_file(_XPLATSTR("D:\\largefile.txt"), azure::storage::access_condition(), options, azure::storage::operation_context());
+
+        try
+        {
+            blob.download_to_file(_XPLATSTR("D:\\largefile.download"), azure::storage::access_condition(), options, azure::storage::operation_context());
+        }
+        catch (azure::storage::storage_exception e)
+        {
+            ucout << e.what() << std::endl;
+            ucout << e.result().extended_error().message() << std::endl;
+        }
+        catch (std::exception e)
+        {
+            ucout << e.what() << std::endl;
+        }
+        catch (...)
+        {
+            ucout << _XPLATSTR("Unhandled exception") << std::endl;
+        }
+    }
 }
