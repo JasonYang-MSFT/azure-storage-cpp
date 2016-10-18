@@ -574,30 +574,30 @@ namespace azure { namespace storage {
                         concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                         auto segment_ostream = buffer.create_ostream();
                         instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).wait();
-						segment_ostream.close();
-						return buffer;
-					}).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
+                        segment_ostream.close();
+                        return buffer;
+                    }).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
                     {
                         semaphore->unlock();
 
-						std::unique_lock<std::mutex> locker(condition_variable_mutex);
-						condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
-						{
-							pplx::extensibility::scoped_rw_lock_t guard(mutex);
-							return *smallest_offset == current_offset;
-						});
-						if (*smallest_offset == current_offset)
-						{
-							pplx::extensibility::scoped_rw_lock_t guard(mutex);
-							target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
-							*smallest_offset += protocol::max_block_size;
-						}
-						else if (*smallest_offset > current_offset)
-						{
-							throw std::runtime_error("Out of order");
-						}
-						condition_variable->notify_all();
-					});
+                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                        condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+                        {
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            return *smallest_offset == current_offset;
+                        });
+                        if (*smallest_offset == current_offset)
+                        {
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
+                            *smallest_offset += protocol::max_block_size;
+                        }
+                        else if (*smallest_offset > current_offset)
+                        {
+                            throw std::runtime_error("Out of order");
+                        }
+                        condition_variable->notify_all();
+                    });
                 }
                 semaphore->wait_all_async().wait();
             });
