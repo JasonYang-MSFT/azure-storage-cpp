@@ -393,9 +393,6 @@ namespace azure { namespace storage {
 		blob_request_options modified_options(options);
 		modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
 
-		auto properties = m_properties;
-		auto metadata = m_metadata;
-		auto copy_state = m_copy_state;
 		const utility::string_t& current_snapshot_time = snapshot_time();
 
 		std::shared_ptr<blob_download_info> download_info = std::make_shared<blob_download_info>();
@@ -478,7 +475,7 @@ namespace azure { namespace storage {
 
 			return true;
 		});
-		command->set_preprocess_response([weak_command, offset, modified_options, properties, metadata, copy_state, download_info](const web::http::http_response& response, const request_result& result, operation_context context)
+		command->set_preprocess_response([weak_command, offset, modified_options, download_info](const web::http::http_response& response, const request_result& result, operation_context context)
 		{
 			std::shared_ptr<core::storage_command<void>> command(weak_command);
 
@@ -513,7 +510,6 @@ namespace azure { namespace storage {
 				// early before the retry policy has the opportunity to change the storage location.
 				command->set_location_mode(core::command_location_mode::primary_or_secondary, result.target_location());
 
-				download_info->m_locked_etag = properties->etag();
 				download_info->m_are_properties_populated = true;
 			}
 		});
