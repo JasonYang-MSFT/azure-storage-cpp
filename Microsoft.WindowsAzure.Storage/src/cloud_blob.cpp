@@ -589,7 +589,7 @@ namespace azure { namespace storage {
                         if (*smallest_offset == current_offset)
                         {
                             pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size());
+                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
                             *smallest_offset += protocol::max_block_size;
                         }
                         else if (*smallest_offset > current_offset)
