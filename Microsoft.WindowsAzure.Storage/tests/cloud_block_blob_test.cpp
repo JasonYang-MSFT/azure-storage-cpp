@@ -705,7 +705,7 @@ SUITE(Blob)
 
         //blob.upload_text(content);
         azure::storage::blob_request_options options;
-        options.set_parallelism_factor(50);
+        options.set_parallelism_factor(20);
         // blob.upload_from_file(_XPLATSTR("D:\\largefile.txt"), azure::storage::access_condition(), options, azure::storage::operation_context());
 
         try
