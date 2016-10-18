@@ -708,6 +708,22 @@ SUITE(Blob)
         options.set_parallelism_factor(50);
         // blob.upload_from_file(_XPLATSTR("D:\\largefile.txt"), azure::storage::access_condition(), options, azure::storage::operation_context());
 
-        blob.download_to_file(_XPLATSTR("D:\\largefile.download"), azure::storage::access_condition(), options, azure::storage::operation_context());
+        try
+        {
+            blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, azure::storage::operation_context());
+        }
+        catch (azure::storage::storage_exception e)
+        {
+            ucout << e.what() << std::endl;
+            ucout << e.result().extended_error().message() << std::endl;
+        }
+        catch (std::exception e)
+        {
+            ucout << e.what() << std::endl;
+        }
+        catch (...)
+        {
+            ucout << _XPLATSTR("Unhandled exception") << std::endl;
+        }
     }
 }
