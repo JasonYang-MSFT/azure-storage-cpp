@@ -552,7 +552,7 @@ namespace azure { namespace storage {
                 pplx::extensibility::reader_writer_lock_t mutex;
                 utility::size64_t source_offset = offset;
                 utility::size64_t source_length = length;
-                std::atomic_int writer = 0;
+                pplx::details::atomic_size_t writer = 0;
 
                 if (offset >= std::numeric_limits<utility::size64_t>::max())
                 {
@@ -594,7 +594,7 @@ namespace azure { namespace storage {
 
                         if(!released)
                         {
-                            ++writer;
+                            pplx::details::atomic_increment(writer);
                             if (writer < options.parallelism_factor())
                             {
                                 released = true;
@@ -623,7 +623,7 @@ namespace azure { namespace storage {
                             }
 
                             condition_variable->notify_all();
-                            --writer;
+                            pplx::details::atomic_decrement(writer);
 
                             if (!released)
                             {
