@@ -600,6 +600,12 @@ namespace azure { namespace storage {
                     });
                 }
                 semaphore->wait_all_async().wait();
+                std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                {
+                    pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                    return *smallest_offset > source_offset + source_length;
+                });
             });
         }
 
