@@ -552,7 +552,7 @@ namespace azure { namespace storage {
                 pplx::extensibility::reader_writer_lock_t mutex;
                 utility::size64_t source_offset = offset;
                 utility::size64_t source_length = length;
-                pplx::details::atomic_size_t writer = 0;
+                pplx::details::atomic_long writer = 0;
 
                 if (offset >= std::numeric_limits<utility::size64_t>::max())
                 {
