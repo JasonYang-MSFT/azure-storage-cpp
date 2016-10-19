@@ -552,6 +552,7 @@ namespace azure { namespace storage {
                 pplx::extensibility::reader_writer_lock_t mutex;
                 utility::size64_t source_offset = offset;
                 utility::size64_t source_length = length;
+                std::atomic_int writer = 0;
 
                 if (offset >= std::numeric_limits<utility::size64_t>::max())
                 {
@@ -576,7 +577,7 @@ namespace azure { namespace storage {
                         instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).wait();
                         segment_ostream.close();
                         return buffer;
-                    }).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
+                    }).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
                     {
                         bool released = false;
                         {
@@ -593,7 +594,12 @@ namespace azure { namespace storage {
 
                         if(!released)
                         {
-                            semaphore->unlock();
+                            ++writer;
+                            if (writer < options.parallelism_factor())
+                            {
+                                released = true;
+                                semaphore->unlock();
+                            }
 
                             std::unique_lock<std::mutex> locker(condition_variable_mutex);
                             condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
@@ -617,6 +623,12 @@ namespace azure { namespace storage {
                             }
 
                             condition_variable->notify_all();
+                            --writer;
+
+                            if (!released)
+                            {
+                                semaphore->unlock();
+                            }
                         }
                     });
                 }
