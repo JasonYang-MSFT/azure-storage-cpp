@@ -703,15 +703,12 @@ SUITE(Blob)
 
         auto blob = container.get_block_blob_reference(_XPLATSTR("download"));
 
-        //blob.upload_text(content);
         azure::storage::blob_request_options options;
         options.set_parallelism_factor(10);
-        // blob.upload_from_file(_XPLATSTR("D:\\largefile.txt"), azure::storage::access_condition(), options, azure::storage::operation_context());
 
         try
         {
             blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, azure::storage::operation_context());
-            azure::storage::operation_context().client_request_id();
         }
         catch (azure::storage::storage_exception e)
         {

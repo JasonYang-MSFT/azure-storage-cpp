@@ -407,9 +407,252 @@ namespace azure { namespace storage {
         concurrency::streams::ostream::pos_type m_target_offset;
     };
 
-    pplx::task<void> cloud_file::download_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t start_offset, utility::size64_t length, const file_access_condition& access_condition, const file_request_options& options, operation_context context) const
+	pplx::task<void> cloud_file::download_range_to_stream_parallel_async(concurrency::streams::ostream target, utility::size64_t start_offset, utility::size64_t length, const file_access_condition& access_condition, const file_request_options& options, operation_context context) const
+	{
+		UNREFERENCED_PARAMETER(access_condition);
+		file_request_options modified_options(options);
+		modified_options.apply_defaults(service_client().default_request_options());
+
+		auto properties = m_properties;
+		auto metadata = m_metadata;
+		auto copy_state = m_copy_state;
+
+		std::shared_ptr<file_download_info> download_info = std::make_shared<file_download_info>();
+		download_info->m_are_properties_populated = false;
+		download_info->m_total_written_to_destination_stream = 0;
+		download_info->m_response_length = std::numeric_limits<utility::size64_t>::max();
+		download_info->m_reset_target = false;
+		download_info->m_target_offset = target.can_seek() ? target.tell() : (Concurrency::streams::basic_ostream<unsigned char>::pos_type)0;
+
+		std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
+		std::weak_ptr<core::storage_command<void>> weak_command(command);
+		command->set_build_request([start_offset, length, modified_options, download_info](web::http::uri_builder uri_builder, const std::chrono::seconds& timeout, operation_context context) -> web::http::http_request
+		{
+			utility::size64_t current_offset = start_offset;
+			utility::size64_t current_length = length;
+			if (download_info->m_total_written_to_destination_stream > 0)
+			{
+				if (start_offset == std::numeric_limits<utility::size64_t>::max())
+				{
+					current_offset = 0;
+				}
+
+				current_offset += download_info->m_total_written_to_destination_stream;
+
+				if (length > 0)
+				{
+					current_length -= download_info->m_total_written_to_destination_stream;
+
+					if (current_length <= 0)
+					{
+						// The entire file has already been downloaded
+						throw std::invalid_argument("offset");
+					}
+				}
+			}
+
+			return protocol::get_file(current_offset, current_length, modified_options.use_transactional_md5() && !download_info->m_are_properties_populated, uri_builder, timeout, context);
+		});
+		command->set_authentication_handler(service_client().authentication_handler());
+		command->set_location_mode(core::command_location_mode::primary_or_secondary);
+		command->set_destination_stream(target);
+		command->set_calculate_response_body_md5(!modified_options.disable_content_md5_validation());
+		command->set_recover_request([target, download_info](utility::size64_t total_written_to_destination_stream, operation_context context) -> bool
+		{
+			if (download_info->m_reset_target)
+			{
+				download_info->m_total_written_to_destination_stream = 0;
+
+				if (total_written_to_destination_stream > 0)
+				{
+					if (!target.can_seek())
+					{
+						return false;
+					}
+
+					target.seek(download_info->m_target_offset);
+				}
+
+				download_info->m_reset_target = false;
+			}
+			else
+			{
+				download_info->m_total_written_to_destination_stream = total_written_to_destination_stream;
+			}
+
+			return true;
+		});
+		command->set_preprocess_response([weak_command, start_offset, modified_options, properties, metadata, copy_state, download_info](const web::http::http_response& response, const request_result& result, operation_context context)
+		{
+			std::shared_ptr<core::storage_command<void>> command(weak_command);
+
+			try
+			{
+				protocol::preprocess_response_void(response, result, context);
+			}
+			catch (...)
+			{
+				// In case any error happens, error information contained in response body might
+				// have been written into the destination stream. So need to reset target to make
+				// sure the destination stream doesn't contain unexpected data since a retry might
+				// be needed.
+				download_info->m_reset_target = true;
+				download_info->m_are_properties_populated = false;
+				command->set_location_mode(core::command_location_mode::primary_or_secondary);
+
+				throw;
+			}
+
+			if (!download_info->m_are_properties_populated)
+			{
+				download_info->m_response_length = result.content_length();
+				download_info->m_response_md5 = result.content_md5();
+
+				if (modified_options.use_transactional_md5() && !modified_options.disable_content_md5_validation() && download_info->m_response_md5.empty()
+					// If range is not set and the file has no MD5 hash, no content md5 will not be returned.
+					// Consider the file has no MD5 hash in default.
+					&& start_offset < std::numeric_limits<utility::size64_t>::max())
+				{
+					throw storage_exception(protocol::error_missing_md5);
+				}
+
+				// Lock to the current storage location when resuming a failed download. This is locked 
+				// early before the retry policy has the opportunity to change the storage location.
+				command->set_location_mode(core::command_location_mode::primary_or_secondary, result.target_location());
+
+				download_info->m_locked_etag = properties->etag();
+				download_info->m_are_properties_populated = true;
+			}
+		});
+		command->set_postprocess_response([weak_command, download_info](const web::http::http_response&, const request_result&, const core::ostream_descriptor& descriptor, operation_context context) -> pplx::task<void>
+		{
+			std::shared_ptr<core::storage_command<void>> command(weak_command);
+
+			// Start the download over from the beginning if a retry is needed again because the last
+			// response was successfully downloaded and the MD5 hash has already been calculated
+			download_info->m_reset_target = true;
+			download_info->m_are_properties_populated = false;
+
+			command->set_location_mode(core::command_location_mode::primary_or_secondary);
+
+			if (!download_info->m_response_md5.empty() && !descriptor.content_md5().empty() && download_info->m_response_md5 != descriptor.content_md5())
+			{
+				throw storage_exception(protocol::error_md5_mismatch);
+			}
+
+			return pplx::task_from_result();
+		});
+		return core::executor<void>::execute_async(command, modified_options, context);
+	}
+
+    pplx::task<void> cloud_file::download_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t start_offset, utility::size64_t length, const file_access_condition& condition, const file_request_options& options, operation_context context) const
     {
-        UNREFERENCED_PARAMETER(access_condition);
+		if (options.parallelism_factor() > 1 && start_offset >= std::numeric_limits<utility::size64_t>::max())
+		{
+			const_cast<cloud_file*>(this)->download_attributes(condition, options, context);
+		}
+
+		if (options.parallelism_factor() > 1 && ((start_offset >= std::numeric_limits<utility::size64_t>::max() && this->m_properties->length() > protocol::max_block_size)
+			|| (start_offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size)))
+		{
+			auto instance = std::make_shared<cloud_file>(*this);
+			return pplx::task_from_result().then([instance, target, start_offset, length, condition, options, context]()
+			{
+				auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
+				pplx::extensibility::reader_writer_lock_t mutex;
+				utility::size64_t source_offset = start_offset;
+				utility::size64_t source_length = length;
+				pplx::details::atomic_long writer(0);
+
+				if (start_offset >= std::numeric_limits<utility::size64_t>::max())
+				{
+					source_offset = 0;
+					source_length = instance->m_properties->length();
+				}
+
+				auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
+				auto condition_variable = std::make_shared<std::condition_variable>();
+				std::mutex  condition_variable_mutex;
+				for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
+				{
+					utility::size64_t current_length = protocol::max_block_size;
+					if (current_offset + current_length > source_offset + source_length)
+					{
+						current_length = source_offset + source_length - current_offset;
+					}
+					semaphore->lock_async().then([instance, &mutex, target, smallest_offset, current_offset, current_length, condition, options, context]()
+					{
+						concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
+						auto segment_ostream = buffer.create_ostream();
+						instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).wait();
+						segment_ostream.close();
+						return buffer;
+					}).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
+					{
+						bool released = false;
+						{
+							pplx::extensibility::scoped_rw_lock_t guard(mutex);
+							if (*smallest_offset == current_offset)
+							{
+								target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+								*smallest_offset += protocol::max_block_size;
+								condition_variable->notify_all();
+								released = true;
+								semaphore->unlock();
+							}
+						}
+
+						if (!released)
+						{
+							pplx::details::atomic_increment(writer);
+							if (writer < options.parallelism_factor())
+							{
+								released = true;
+								semaphore->unlock();
+							}
+
+							std::unique_lock<std::mutex> locker(condition_variable_mutex);
+							condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+							{
+								pplx::extensibility::scoped_rw_lock_t guard(mutex);
+								return *smallest_offset == current_offset;
+							});
+
+							{
+								pplx::extensibility::scoped_rw_lock_t guard(mutex);
+
+								if (*smallest_offset == current_offset)
+								{
+									target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+									*smallest_offset += protocol::max_block_size;
+								}
+								else if (*smallest_offset > current_offset)
+								{
+									throw std::runtime_error("Out of order");
+								}
+							}
+
+							condition_variable->notify_all();
+							pplx::details::atomic_decrement(writer);
+
+							if (!released)
+							{
+								semaphore->unlock();
+							}
+						}
+					});
+				}
+				semaphore->wait_all_async().wait();
+				std::unique_lock<std::mutex> locker(condition_variable_mutex);
+				condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+				{
+					pplx::extensibility::scoped_rw_lock_t guard(mutex);
+					return *smallest_offset > source_offset + source_length;
+				});
+			});
+		}
+
+        UNREFERENCED_PARAMETER(condition);
         file_request_options modified_options(options);
         modified_options.apply_defaults(service_client().default_request_options());
 

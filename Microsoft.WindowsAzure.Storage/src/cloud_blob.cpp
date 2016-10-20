@@ -537,13 +537,13 @@ namespace azure { namespace storage {
 
     pplx::task<void> cloud_blob::download_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t offset, utility::size64_t length, const access_condition& condition, const blob_request_options& options, operation_context context)
     {
-        if (offset >= std::numeric_limits<utility::size64_t>::max())
+        if (options.parallelism_factor() > 1 && offset >= std::numeric_limits<utility::size64_t>::max())
         {
             this->download_attributes(condition, options, context);
         }
 
-        if ((offset >= std::numeric_limits<utility::size64_t>::max() && this->m_properties->size() > protocol::max_block_size)
-            || (offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size))
+        if (options.parallelism_factor() > 1 && ((offset >= std::numeric_limits<utility::size64_t>::max() && this->m_properties->size() > protocol::max_block_size)
+            || (offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size)))
         {
             auto instance = std::make_shared<cloud_blob>(*this);
             return pplx::task_from_result().then([instance, target, offset, length, condition, options, context]()
