@@ -640,6 +640,7 @@ namespace azure { namespace storage {
                 m_content_length = std::move(other.m_content_length);
                 m_content_md5 = std::move(other.m_content_md5);
                 m_etag = std::move(other.m_etag);
+                m_request_server_encrypted = other.m_request_server_encrypted;
                 m_extended_error = std::move(other.m_extended_error);
             }
             return *this;
