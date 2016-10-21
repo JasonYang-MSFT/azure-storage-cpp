@@ -573,12 +573,9 @@ namespace azure { namespace storage {
                             {
                                 concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                                 auto segment_ostream = buffer.create_ostream();
-                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream]()
+                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream,semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options]()
                                 {
                                     segment_ostream.close();
-                                    return buffer;
-                                }).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
-                                {
                                     bool released = false;
                                     {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
@@ -633,13 +630,15 @@ namespace azure { namespace storage {
                                 });
                             });
                         }
-                        semaphore->wait_all_async().wait();
-                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                        condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                        semaphore->wait_all_async().then([&condition_variable_mutex, condition_variable, smallest_offset, &mutex, source_offset, source_length]()
                         {
-                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                            return *smallest_offset > source_offset + source_length;
-                        });
+                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                            condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                            {
+                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                return *smallest_offset > source_offset + source_length;
+                            });
+                        }).wait();
                     });
                 }
                 else
