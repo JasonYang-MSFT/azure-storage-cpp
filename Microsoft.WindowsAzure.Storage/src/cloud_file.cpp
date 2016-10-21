@@ -24,6 +24,8 @@
 #include "wascore/constants.h"
 #include "wascore/filestream.h"
 
+#include <condition_variable>
+
 namespace azure { namespace storage {
 
 
