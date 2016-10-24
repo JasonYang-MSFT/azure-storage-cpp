@@ -601,7 +601,7 @@ namespace azure { namespace storage {
                                         std::unique_lock<std::mutex> locker(condition_variable_mutex);
                                         condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
                                         {
-                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                            pplx::extensibility::scoped_read_lock_t guard(mutex);
                                             return *smallest_offset == current_offset;
                                         });
 
@@ -635,7 +635,7 @@ namespace azure { namespace storage {
                             std::unique_lock<std::mutex> locker(condition_variable_mutex);
                             condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
                             {
-                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                pplx::extensibility::scoped_read_lock_t guard(mutex);
                                 return *smallest_offset > source_offset + source_length;
                             });
                         }).wait();
