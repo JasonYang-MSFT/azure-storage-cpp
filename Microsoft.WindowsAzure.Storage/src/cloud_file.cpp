@@ -15,9 +15,10 @@
 // </copyright>
 // -----------------------------------------------------------------------------------------
 
+#include "stdafx.h"
+
 #include <condition_variable>
 
-#include "stdafx.h"
 #include "was/file.h"
 #include "was/error_code_strings.h"
 #include "wascore/protocol.h"
@@ -585,7 +586,7 @@ namespace azure { namespace storage {
                             {
                                 concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                                 auto segment_ostream = buffer.create_ostream();
-                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options]()
+                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
                                 {
                                     segment_ostream.close();
                                     bool released = false;
@@ -593,7 +594,13 @@ namespace azure { namespace storage {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                         if (*smallest_offset == current_offset)
                                         {
-                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
+                                            {
+                                                if (current_length != downloaded_size)
+                                                {
+                                                    throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
+                                                }
+                                            }).wait();
                                             *smallest_offset += protocol::max_block_size;
                                             condition_variable->notify_all();
                                             released = true;

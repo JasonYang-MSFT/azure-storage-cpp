@@ -15,9 +15,10 @@
 // </copyright>
 // -----------------------------------------------------------------------------------------
 
+#include "stdafx.h"
+
 #include <condition_variable>
 
-#include "stdafx.h"
 #include "was/blob.h"
 #include "was/error_code_strings.h"
 #include "wascore/protocol.h"
