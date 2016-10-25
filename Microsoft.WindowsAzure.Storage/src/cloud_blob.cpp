@@ -15,6 +15,8 @@
 // </copyright>
 // -----------------------------------------------------------------------------------------
 
+#include <condition_variable>
+
 #include "stdafx.h"
 #include "was/blob.h"
 #include "was/error_code_strings.h"
@@ -23,8 +25,6 @@
 #include "wascore/blobstreams.h"
 #include "wascore/util.h"
 #include "wascore/async_semaphore.h"
-
-#include <condition_variable>
 
 namespace azure { namespace storage {
 
@@ -401,7 +401,7 @@ namespace azure { namespace storage {
         download_info->m_total_written_to_destination_stream = 0;
         download_info->m_response_length = std::numeric_limits<utility::size64_t>::max();
         download_info->m_reset_target = false;
-        download_info->m_target_offset = target.can_seek() ? target.tell() : (Concurrency::streams::basic_ostream<unsigned char>::pos_type)0;
+        download_info->m_target_offset = target.can_seek() ? target.tell() : static_cast<Concurrency::streams::basic_ostream<unsigned char>::pos_type>(0);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
         std::weak_ptr<core::storage_command<void>> weak_command(command);
@@ -573,7 +573,7 @@ namespace azure { namespace storage {
                             {
                                 concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                                 auto segment_ostream = buffer.create_ostream();
-                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream,semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options]()
+                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream,semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
                                 {
                                     segment_ostream.close();
                                     bool released = false;
@@ -581,7 +581,13 @@ namespace azure { namespace storage {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                         if (*smallest_offset == current_offset)
                                         {
-                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
+                                            {
+                                                if (current_length != downloaded_size)
+                                                {
+                                                    throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
+                                                }
+                                            }).wait();
                                             *smallest_offset += protocol::max_block_size;
                                             condition_variable->notify_all();
                                             released = true;
@@ -661,7 +667,7 @@ namespace azure { namespace storage {
         download_info->m_total_written_to_destination_stream = 0;
         download_info->m_response_length = std::numeric_limits<utility::size64_t>::max();
         download_info->m_reset_target = false;
-        download_info->m_target_offset = target.can_seek() ? target.tell() : (Concurrency::streams::basic_ostream<unsigned char>::pos_type)0;
+        download_info->m_target_offset = target.can_seek() ? target.tell() : static_cast<Concurrency::streams::basic_ostream<unsigned char>::pos_type>(0);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
         std::weak_ptr<core::storage_command<void>> weak_command(command);

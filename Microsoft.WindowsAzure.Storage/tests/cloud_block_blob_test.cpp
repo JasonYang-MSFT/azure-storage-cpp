@@ -708,7 +708,8 @@ SUITE(Blob)
 
         try
         {
-            blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, azure::storage::operation_context());
+            blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, m_context);
+            check_parallelism(m_context, options.parallelism_factor());
         }
         catch (azure::storage::storage_exception e)
         {

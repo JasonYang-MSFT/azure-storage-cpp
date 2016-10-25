@@ -475,31 +475,32 @@ SUITE(File)
         }
     }
 
-	TEST_FIXTURE(file_test_base, parallel_download)
-	{
-		auto share = m_client.get_share_reference(_XPLATSTR("parallel"));
-		share.create_if_not_exists();
+    TEST_FIXTURE(file_test_base, parallel_download)
+    {
+        auto share = m_client.get_share_reference(_XPLATSTR("parallel"));
+        share.create_if_not_exists();
 
-		auto file = share.get_root_directory_reference().get_file_reference(_XPLATSTR("download"));
-		azure::storage::file_request_options options;
-		options.set_parallelism_factor(10);
+        auto file = share.get_root_directory_reference().get_file_reference(_XPLATSTR("download"));
+        azure::storage::file_request_options options;
+        options.set_parallelism_factor(10);
 
-		try
-		{
-			file.download_to_file(_XPLATSTR("largefile.download"), azure::storage::file_access_condition(), options, azure::storage::operation_context());
-		}
-		catch (azure::storage::storage_exception e)
-		{
-			ucout << e.what() << std::endl;
-			ucout << e.result().extended_error().message() << std::endl;
-		}
-		catch (std::exception e)
-		{
-			ucout << e.what() << std::endl;
-		}
-		catch (...)
-		{
-			ucout << _XPLATSTR("Unhandled exception") << std::endl;
-		}
-	}
+        try
+        {
+            file.download_to_file(_XPLATSTR("largefile.download"), azure::storage::file_access_condition(), options, m_context);
+            check_parallelism(m_context, options.parallelism_factor());
+        }
+        catch (azure::storage::storage_exception e)
+        {
+            ucout << e.what() << std::endl;
+            ucout << e.result().extended_error().message() << std::endl;
+        }
+        catch (std::exception e)
+        {
+            ucout << e.what() << std::endl;
+        }
+        catch (...)
+        {
+            ucout << _XPLATSTR("Unhandled exception") << std::endl;
+        }
+    }
 }

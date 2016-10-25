@@ -15,6 +15,8 @@
 // </copyright>
 // -----------------------------------------------------------------------------------------
 
+#include <condition_variable>
+
 #include "stdafx.h"
 #include "was/file.h"
 #include "was/error_code_strings.h"
@@ -23,8 +25,6 @@
 #include "wascore/util.h"
 #include "wascore/constants.h"
 #include "wascore/filestream.h"
-
-#include <condition_variable>
 
 namespace azure { namespace storage {
 
@@ -424,7 +424,7 @@ namespace azure { namespace storage {
         download_info->m_total_written_to_destination_stream = 0;
         download_info->m_response_length = std::numeric_limits<utility::size64_t>::max();
         download_info->m_reset_target = false;
-        download_info->m_target_offset = target.can_seek() ? target.tell() : (Concurrency::streams::basic_ostream<unsigned char>::pos_type)0;
+        download_info->m_target_offset = target.can_seek() ? target.tell() : static_cast<Concurrency::streams::basic_ostream<unsigned char>::pos_type>(0);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
         std::weak_ptr<core::storage_command<void>> weak_command(command);
@@ -551,106 +551,112 @@ namespace azure { namespace storage {
     {
         if (options.parallelism_factor() > 1 && start_offset >= std::numeric_limits<utility::size64_t>::max())
         {
-            const_cast<cloud_file*>(this)->download_attributes(condition, options, context);
-        }
-
-        if (options.parallelism_factor() > 1 && ((start_offset >= std::numeric_limits<utility::size64_t>::max() && this->m_properties->length() > protocol::max_block_size)
-            || (start_offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size)))
-        {
             auto instance = std::make_shared<cloud_file>(*this);
-            return pplx::task_from_result().then([instance, target, start_offset, length, condition, options, context]()
+            return const_cast<cloud_file*>(this)->download_attributes_async(condition, options, context).then([instance, target, start_offset, length, condition, options, context]()
             {
-                auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
-                pplx::extensibility::reader_writer_lock_t mutex;
-                utility::size64_t source_offset = start_offset;
-                utility::size64_t source_length = length;
-                pplx::details::atomic_long writer(0);
-
-                if (start_offset >= std::numeric_limits<utility::size64_t>::max())
+                if (options.parallelism_factor() > 1 && ((start_offset >= std::numeric_limits<utility::size64_t>::max() && instance->m_properties->length() > protocol::max_block_size)
+                    || (start_offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size)))
                 {
-                    source_offset = 0;
-                    source_length = instance->m_properties->length();
-                }
+                    return pplx::task_from_result().then([instance, target, start_offset, length, condition, options, context]()
+                    {
+                        auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
+                        pplx::extensibility::reader_writer_lock_t mutex;
+                        utility::size64_t source_offset = start_offset;
+                        utility::size64_t source_length = length;
+                        pplx::details::atomic_long writer(0);
 
-                auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
-                auto condition_variable = std::make_shared<std::condition_variable>();
-                std::mutex  condition_variable_mutex;
-                for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
-                {
-                    utility::size64_t current_length = protocol::max_block_size;
-                    if (current_offset + current_length > source_offset + source_length)
-                    {
-                        current_length = source_offset + source_length - current_offset;
-                    }
-                    semaphore->lock_async().then([instance, &mutex, target, smallest_offset, current_offset, current_length, condition, options, context]()
-                    {
-                        concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
-                        auto segment_ostream = buffer.create_ostream();
-                        instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).wait();
-                        segment_ostream.close();
-                        return buffer;
-                    }).then([semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options](concurrency::streams::container_buffer<std::vector<uint8_t>> buffer)
-                    {
-                        bool released = false;
+                        if (start_offset >= std::numeric_limits<utility::size64_t>::max())
                         {
-                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                            if (*smallest_offset == current_offset)
-                            {
-                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
-                                *smallest_offset += protocol::max_block_size;
-                                condition_variable->notify_all();
-                                released = true;
-                                semaphore->unlock();
-                            }
+                            source_offset = 0;
+                            source_length = instance->m_properties->length();
                         }
 
-                        if (!released)
+                        auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
+                        auto condition_variable = std::make_shared<std::condition_variable>();
+                        std::mutex  condition_variable_mutex;
+                        for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
                         {
-                            pplx::details::atomic_increment(writer);
-                            if (writer < options.parallelism_factor())
+                            utility::size64_t current_length = protocol::max_block_size;
+                            if (current_offset + current_length > source_offset + source_length)
                             {
-                                released = true;
-                                semaphore->unlock();
+                                current_length = source_offset + source_length - current_offset;
                             }
-
-                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                            condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+                            semaphore->lock_async().then([instance, &mutex, semaphore, condition_variable, &condition_variable_mutex, &writer, target, smallest_offset, current_offset, current_length, condition, options, context]()
                             {
-                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                                return *smallest_offset == current_offset;
+                                concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
+                                auto segment_ostream = buffer.create_ostream();
+                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, &mutex, target, &writer, options]()
+                                {
+                                    segment_ostream.close();
+                                    bool released = false;
+                                    {
+                                        pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                        if (*smallest_offset == current_offset)
+                                        {
+                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                            *smallest_offset += protocol::max_block_size;
+                                            condition_variable->notify_all();
+                                            released = true;
+                                            semaphore->unlock();
+                                        }
+                                    }
+
+                                    if (!released)
+                                    {
+                                        pplx::details::atomic_increment(writer);
+                                        if (writer < options.parallelism_factor())
+                                        {
+                                            released = true;
+                                            semaphore->unlock();
+                                        }
+
+                                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                                        condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+                                        {
+                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                            return *smallest_offset == current_offset;
+                                        });
+
+                                        {
+                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+
+                                            if (*smallest_offset == current_offset)
+                                            {
+                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                                *smallest_offset += protocol::max_block_size;
+                                            }
+                                            else if (*smallest_offset > current_offset)
+                                            {
+                                                throw std::runtime_error("Out of order");
+                                            }
+                                        }
+
+                                        condition_variable->notify_all();
+                                        pplx::details::atomic_decrement(writer);
+
+                                        if (!released)
+                                        {
+                                            semaphore->unlock();
+                                        }
+                                    }
+                                });
                             });
-
+                        }
+                        semaphore->wait_all_async().then([&condition_variable_mutex, condition_variable, smallest_offset, &mutex, source_offset, source_length]()
+                        {
+                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                            condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
                             {
                                 pplx::extensibility::scoped_rw_lock_t guard(mutex);
-
-                                if (*smallest_offset == current_offset)
-                                {
-                                    target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
-                                    *smallest_offset += protocol::max_block_size;
-                                }
-                                else if (*smallest_offset > current_offset)
-                                {
-                                    throw std::runtime_error("Out of order");
-                                }
-                            }
-
-                            condition_variable->notify_all();
-                            pplx::details::atomic_decrement(writer);
-
-                            if (!released)
-                            {
-                                semaphore->unlock();
-                            }
-                        }
+                                return *smallest_offset > source_offset + source_length;
+                            });
+                        }).wait();
                     });
                 }
-                semaphore->wait_all_async().wait();
-                std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                else
                 {
-                    pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                    return *smallest_offset > source_offset + source_length;
-                });
+                    return instance->download_range_to_stream_parallel_async(target, start_offset, length, condition, options, context);
+                }
             });
         }
 
@@ -667,7 +673,7 @@ namespace azure { namespace storage {
         download_info->m_total_written_to_destination_stream = 0;
         download_info->m_response_length = std::numeric_limits<utility::size64_t>::max();
         download_info->m_reset_target = false;
-        download_info->m_target_offset = target.can_seek() ? target.tell() : (Concurrency::streams::basic_ostream<unsigned char>::pos_type)0;
+        download_info->m_target_offset = target.can_seek() ? target.tell() : static_cast<Concurrency::streams::basic_ostream<unsigned char>::pos_type>(0);
 
         std::shared_ptr<core::storage_command<void>> command = std::make_shared<core::storage_command<void>>(uri());
         std::weak_ptr<core::storage_command<void>> weak_command(command);
