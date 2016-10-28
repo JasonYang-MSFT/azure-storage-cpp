@@ -700,4 +700,34 @@ SUITE(Blob)
             CHECK_EQUAL(web::http::status_codes::Conflict, m_context.request_results().back().http_status_code());
         }
     }
+
+    TEST_FIXTURE(block_blob_test_base, parallel_download)
+    {
+        auto container = m_client.get_container_reference(_XPLATSTR("parallel"));
+        container.create_if_not_exists();
+
+        auto blob = container.get_block_blob_reference(_XPLATSTR("download"));
+
+        azure::storage::blob_request_options options;
+        options.set_parallelism_factor(10);
+
+        try
+        {
+            blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, m_context);
+            // check_parallelism(m_context, options.parallelism_factor());
+        }
+        catch (azure::storage::storage_exception e)
+        {
+            ucout << e.what() << std::endl;
+            ucout << e.result().extended_error().message() << std::endl;
+        }
+        catch (std::exception e)
+        {
+            ucout << e.what() << std::endl;
+        }
+        catch (...)
+        {
+            ucout << _XPLATSTR("Unhandled exception") << std::endl;
+        }
+    }
 }
