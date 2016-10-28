@@ -617,7 +617,13 @@ namespace azure { namespace storage {
 
                                             if (*smallest_offset == current_offset)
                                             {
-                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
+                                                {
+                                                    if (current_length != downloaded_size)
+                                                    {
+                                                        throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
+                                                    }
+                                                }).wait();
                                                 *smallest_offset += protocol::max_block_size;
                                             }
                                             else if (*smallest_offset > current_offset)
@@ -645,6 +651,7 @@ namespace azure { namespace storage {
                                 pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                 return *smallest_offset > source_offset + source_length;
                             });
+                            condition_variable->notify_all();
                         }).wait();
                     });
                 }
