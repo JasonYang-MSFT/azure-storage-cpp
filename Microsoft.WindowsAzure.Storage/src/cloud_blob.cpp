@@ -541,7 +541,7 @@ namespace azure { namespace storage {
         if (options.parallelism_factor() > 1 && offset >= std::numeric_limits<utility::size64_t>::max())
         {
             auto instance = std::make_shared<cloud_blob>(*this);
-            return this->download_attributes_async(condition, options, context).then([instance, target, offset, length, condition, options, context]()
+            return instance->download_attributes_async(condition, options, context).then([instance, target, offset, length, condition, options, context]()
             {
                 if (options.parallelism_factor() > 1 && ((offset >= std::numeric_limits<utility::size64_t>::max() && instance->m_properties->size() > protocol::max_block_size)
                     || (offset < std::numeric_limits<utility::size64_t>::max() && length > protocol::max_block_size)))
@@ -582,13 +582,7 @@ namespace azure { namespace storage {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                         if (*smallest_offset == current_offset)
                                         {
-                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
-                                            {
-                                                if (current_length != downloaded_size)
-                                                {
-                                                    throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
-                                                }
-                                            }).wait();
+                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
                                             *smallest_offset += protocol::max_block_size;
                                             condition_variable->notify_all();
                                             released = true;
@@ -617,13 +611,7 @@ namespace azure { namespace storage {
 
                                             if (*smallest_offset == current_offset)
                                             {
-                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
-                                                {
-                                                    if (current_length != downloaded_size)
-                                                    {
-                                                        throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
-                                                    }
-                                                }).wait();
+                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
                                                 *smallest_offset += protocol::max_block_size;
                                             }
                                             else if (*smallest_offset > current_offset)
@@ -643,16 +631,13 @@ namespace azure { namespace storage {
                                 });
                             });
                         }
-                        semaphore->wait_all_async().then([&condition_variable_mutex, condition_variable, smallest_offset, &mutex, source_offset, source_length]()
-                        { 
-                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                            condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
-                            {
-                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                                return *smallest_offset > source_offset + source_length;
-                            });
-                            condition_variable->notify_all();
-                        }).wait();
+                        semaphore->wait_all_async().wait();
+                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                        condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                        {
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            return *smallest_offset > source_offset + source_length;
+                        });
                     });
                 }
                 else

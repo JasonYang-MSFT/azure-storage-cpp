@@ -594,13 +594,7 @@ namespace azure { namespace storage {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                         if (*smallest_offset == current_offset)
                                         {
-                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).then([current_length](size_t downloaded_size)
-                                            {
-                                                if (current_length != downloaded_size)
-                                                {
-                                                    throw std::runtime_error("Parallel download failed with one block downloaded imcomplete.");
-                                                }
-                                            }).wait();
+                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
                                             *smallest_offset += protocol::max_block_size;
                                             condition_variable->notify_all();
                                             released = true;
@@ -649,15 +643,13 @@ namespace azure { namespace storage {
                                 });
                             });
                         }
-                        semaphore->wait_all_async().then([&condition_variable_mutex, condition_variable, smallest_offset, &mutex, source_offset, source_length]()
+                        semaphore->wait_all_async().wait();
+                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                        condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
                         {
-                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                            condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
-                            {
-                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                                return *smallest_offset > source_offset + source_length;
-                            });
-                        }).wait();
+                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                            return *smallest_offset > source_offset + source_length;
+                        });
                     });
                 }
                 else
