@@ -450,7 +450,7 @@ namespace azure { namespace storage { namespace core {
                 }
 
                 // 5-6. Potentially upload data and get response
-#ifdef _WIN32
+#ifdef IN32
                 web::http::client::http_client client(instance->m_request.request_uri().authority(), config);
 #else
                 web::http::client::http_client& client = core::http_client_reusable::get_http_client(instance->m_request.request_uri().authority(), config);

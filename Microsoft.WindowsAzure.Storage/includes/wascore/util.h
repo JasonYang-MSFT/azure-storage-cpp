@@ -107,7 +107,7 @@ namespace azure { namespace storage { namespace core {
 
 #pragma endregion
 
-#ifndef _WIN32
+#ifndef IN32
     class http_client_reusable
     {
     public:
@@ -116,7 +116,7 @@ namespace azure { namespace storage { namespace core {
 
     private:
         WASTORAGE_API static std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> s_http_clients;
-        WASTORAGE_API static std::mutex s_mutex;
+        WASTORAGE_API static pplx::extensibility::reader_writer_lock_t s_mutex;
     };
 #endif
 

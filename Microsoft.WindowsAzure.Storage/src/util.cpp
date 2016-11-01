@@ -447,15 +447,15 @@ namespace azure { namespace storage {  namespace core {
 
     }
 
-#ifndef _WIN32
+#ifndef IN32
     std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::s_http_clients;
-    std::mutex http_client_reusable::s_mutex;
+    pplx::extensibility::reader_writer_lock_t http_client_reusable::s_mutex;
 
     web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri)
     {
         utility::string_t key(uri.to_string());
 
-        std::lock_guard<std::mutex> guard(s_mutex);
+        pplx::extensibility::scoped_rw_lock_t guard(s_mutex);
         auto iter = s_http_clients.find(key);
         if (iter == s_http_clients.end())
         {
@@ -488,7 +488,7 @@ namespace azure { namespace storage {  namespace core {
         key.append(utility::conversions::print_string(config.chunksize()));
         key.append(_XPLATSTR("#"));
 
-        std::lock_guard<std::mutex> guard(s_mutex);
+        pplx::extensibility::scoped_rw_lock_t guard(s_mutex);
         auto iter = s_http_clients.find(key);
         if (iter == s_http_clients.end())
         {
