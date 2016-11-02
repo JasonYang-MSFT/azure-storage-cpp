@@ -716,6 +716,10 @@ SUITE(Blob)
             ucout << e.what() << std::endl;
             ucout << e.result().extended_error().message() << std::endl;
         }
+        catch (std::runtime_error e)
+        {
+            ucout << e.what() << std::endl;
+        }
         catch (std::exception e)
         {
             ucout << e.what() << std::endl;
