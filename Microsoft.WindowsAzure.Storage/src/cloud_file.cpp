@@ -561,7 +561,6 @@ namespace azure { namespace storage {
                     return pplx::task_from_result().then([instance, target, start_offset, length, condition, options, context]()
                     {
                         auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
-                        pplx::extensibility::reader_writer_lock_t mutex;
                         utility::size64_t source_offset = start_offset;
                         utility::size64_t source_length = length;
                         pplx::details::atomic_long writer(0);
@@ -582,16 +581,16 @@ namespace azure { namespace storage {
                             {
                                 current_length = source_offset + source_length - current_offset;
                             }
-                            semaphore->lock_async().then([instance, &mutex, semaphore, condition_variable, &condition_variable_mutex, &writer, target, smallest_offset, current_offset, current_length, condition, options, context]()
+                            semaphore->lock_async().then([instance, semaphore, condition_variable, &condition_variable_mutex, &writer, target, smallest_offset, current_offset, current_length, condition, options, context]()
                             {
                                 concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                                 auto segment_ostream = buffer.create_ostream();
-                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
+                                instance->download_range_to_stream_parallel_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, target, &writer, options]()
                                 {
                                     segment_ostream.close();
                                     bool released = false;
                                     {
-                                        pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
                                         if (*smallest_offset == current_offset)
                                         {
                                             target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
@@ -612,14 +611,13 @@ namespace azure { namespace storage {
                                         }
 
                                         std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                                        condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+                                        condition_variable->wait(locker, [smallest_offset, current_offset]()
                                         {
-                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                             return *smallest_offset == current_offset;
                                         });
 
                                         {
-                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
 
                                             if (*smallest_offset == current_offset)
                                             {
@@ -630,9 +628,9 @@ namespace azure { namespace storage {
                                             {
                                                 throw std::runtime_error("Out of order");
                                             }
+                                            condition_variable->notify_all();
                                         }
 
-                                        condition_variable->notify_all();
                                         pplx::details::atomic_decrement(writer);
 
                                         if (!released)
@@ -645,9 +643,8 @@ namespace azure { namespace storage {
                         }
                         semaphore->wait_all_async().wait();
                         std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                        condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                        condition_variable->wait(locker, [smallest_offset, source_offset, source_length]()
                         {
-                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
                             return *smallest_offset > source_offset + source_length;
                         });
                     });
