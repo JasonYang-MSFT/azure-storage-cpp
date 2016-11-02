@@ -584,8 +584,14 @@ namespace azure { namespace storage {
                                         {
                                             target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
                                             *smallest_offset += protocol::max_block_size;
-                                            condition_variable->notify_all();
                                             released = true;
+                                        }
+
+                                        if (released == true)
+                                        {
+                                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                                            condition_variable->notify_all();
+
                                             semaphore->unlock();
                                         }
                                     }
@@ -599,12 +605,14 @@ namespace azure { namespace storage {
                                             semaphore->unlock();
                                         }
 
-                                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                                        condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
                                         {
-                                            pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                                            return *smallest_offset == current_offset;
-                                        });
+                                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                                            condition_variable->wait(locker, [smallest_offset, current_offset, &mutex]()
+                                            {
+                                                pplx::extensibility::scoped_rw_lock_t guard(mutex);
+                                                return *smallest_offset == current_offset;
+                                            });
+                                        }
 
                                         {
                                             pplx::extensibility::scoped_rw_lock_t guard(mutex);
@@ -620,7 +628,11 @@ namespace azure { namespace storage {
                                             }
                                         }
 
-                                        condition_variable->notify_all();
+                                        {
+                                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                                            condition_variable->notify_all();
+                                        }
+
                                         pplx::details::atomic_decrement(writer);
 
                                         if (!released)
