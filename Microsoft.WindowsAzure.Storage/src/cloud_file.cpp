@@ -609,12 +609,14 @@ namespace azure { namespace storage {
                                             released = true;
                                             semaphore->unlock();
                                         }
-
-                                        std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                                        condition_variable->wait(locker, [smallest_offset, current_offset]()
+                                        
                                         {
-                                            return *smallest_offset == current_offset;
-                                        });
+                                            std::unique_lock<std::mutex> locker(condition_variable_mutex);
+                                            condition_variable->wait(locker, [smallest_offset, current_offset]()
+                                            {
+                                                return *smallest_offset == current_offset;
+                                            });
+                                        }
 
                                         {
                                             std::unique_lock<std::mutex> locker(condition_variable_mutex);
