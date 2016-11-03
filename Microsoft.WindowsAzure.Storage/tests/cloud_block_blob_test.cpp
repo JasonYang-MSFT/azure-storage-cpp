@@ -695,4 +695,14 @@ SUITE(Blob)
 
         m_context.set_response_received(std::function<void(web::http::http_request &, const web::http::http_response&, azure::storage::operation_context)>());
     }
+
+    /// <summary>
+    /// Test http client reuse.
+    /// </summary>
+    TEST_FIXTURE(block_blob_test_base, http_client_reuse)
+    {
+        azure::storage::blob_request_options options;
+        options.set_parallelism_factor(10);
+        m_blob.upload_from_file(_XPLATSTR("4gb.txt"), azure::storage::access_condition(), options, m_context);
+    }
 }
