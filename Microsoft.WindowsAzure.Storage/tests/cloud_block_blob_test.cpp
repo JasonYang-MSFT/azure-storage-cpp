@@ -702,7 +702,7 @@ SUITE(Blob)
     TEST_FIXTURE(block_blob_test_base, http_client_reuse)
     {
         azure::storage::blob_request_options options;
-        options.set_parallelism_factor(10);
+        options.set_parallelism_factor(20);
         m_blob.upload_from_file(_XPLATSTR("4gb.txt"), azure::storage::access_condition(), options, m_context);
     }
 }
