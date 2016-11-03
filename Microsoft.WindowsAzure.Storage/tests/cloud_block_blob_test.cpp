@@ -698,16 +698,16 @@ SUITE(Blob)
 
     TEST_FIXTURE(block_blob_test_base, parallel_download)
     {
-        auto container = m_client.get_container_reference(_XPLATSTR("parallel"));
-        container.create_if_not_exists();
-
-        auto blob = container.get_block_blob_reference(_XPLATSTR("download"));
-
-        azure::storage::blob_request_options options;
-        options.set_parallelism_factor(10);
-
         try
         {
+            auto container = m_client.get_container_reference(_XPLATSTR("parallel"));
+            container.create_if_not_exists();
+
+            auto blob = container.get_block_blob_reference(_XPLATSTR("download"));
+
+            azure::storage::blob_request_options options;
+            options.set_parallelism_factor(10);
+
             blob.download_to_file(_XPLATSTR("largefile.download"), azure::storage::access_condition(), options, m_context);
             check_parallelism(m_context, options.parallelism_factor());
         }
