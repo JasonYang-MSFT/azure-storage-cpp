@@ -451,7 +451,7 @@ namespace azure { namespace storage {  namespace core {
     std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> http_client_reusable::s_http_clients;
     std::mutex http_client_reusable::s_mutex;
 
-    web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri)
+    std::shared_ptr<web::http::client::http_client> http_client_reusable::get_http_client(const web::uri& uri)
     {
         utility::string_t key(uri.to_string());
 
@@ -461,15 +461,15 @@ namespace azure { namespace storage {  namespace core {
         {
             auto http_client = std::make_shared<web::http::client::http_client>(uri);
             s_http_clients[key] = http_client;
-            return *http_client;
+            return http_client;
         }
         else
         {
-            return *iter->second;
+            return iter->second;
         }
     }
 
-    web::http::client::http_client& http_client_reusable::get_http_client(const web::uri& uri, const web::http::client::http_client_config& config)
+    std::shared_ptr<web::http::client::http_client> http_client_reusable::get_http_client(const web::uri& uri, const web::http::client::http_client_config& config)
     {
         utility::string_t key(uri.to_string());
         key.append(_XPLATSTR("#"));
@@ -494,11 +494,11 @@ namespace azure { namespace storage {  namespace core {
         {
             auto http_client = std::make_shared<web::http::client::http_client>(uri, config);
             s_http_clients[key] = http_client;
-            return *http_client;
+            return http_client;
         }
         else
         {
-            return *iter->second;
+            return iter->second;
         }
     }
 #endif
