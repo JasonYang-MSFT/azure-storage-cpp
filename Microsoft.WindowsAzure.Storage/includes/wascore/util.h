@@ -19,6 +19,9 @@
 
 #include <map>
 
+#ifndef _Win32
+    #include "pplx/threadpool.h"
+#endif
 #include "cpprest/streams.h"
 
 #include "was/core.h"
@@ -115,6 +118,7 @@ namespace azure { namespace storage { namespace core {
         WASTORAGE_API static std::shared_ptr<web::http::client::http_client> get_http_client(const web::uri& uri, const web::http::client::http_client_config& config);
 
     private:
+        static const boost::asio::io_service& m_service;
         WASTORAGE_API static std::map<utility::string_t, std::shared_ptr<web::http::client::http_client>> s_http_clients;
         WASTORAGE_API static std::mutex s_mutex;
     };
