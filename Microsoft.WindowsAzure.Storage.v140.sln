@@ -1,9 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.24720.0
+VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Microsoft.WindowsAzure.Storage.v140", "Microsoft.WindowsAzure.Storage\Microsoft.WindowsAzure.Storage.v140.vcxproj", "{25D342C3-6CDA-44DD-A16A-32A19B692785}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Microsoft.WindowsAzure.Storage.UnitTests.v140", "Microsoft.WindowsAzure.Storage\tests\Microsoft.WindowsAzure.Storage.UnitTests.v140.vcxproj", "{BC8759CC-C115-4E27-9545-D25E2CDA9412}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UnitTest++.vsnet2005", "Microsoft.WindowsAzure.Storage\tests\UnitTest++\UnitTest++.vsnet2005.vcxproj", "{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,6 +25,18 @@ Global
 		{25D342C3-6CDA-44DD-A16A-32A19B692785}.Release|Win32.Build.0 = Release|Win32
 		{25D342C3-6CDA-44DD-A16A-32A19B692785}.Release|x64.ActiveCfg = Release|x64
 		{25D342C3-6CDA-44DD-A16A-32A19B692785}.Release|x64.Build.0 = Release|x64
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Debug|Win32.ActiveCfg = Debug|Win32
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Debug|Win32.Build.0 = Debug|Win32
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Debug|x64.ActiveCfg = Debug|Win32
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Release|Win32.ActiveCfg = Release|Win32
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Release|Win32.Build.0 = Release|Win32
+		{BC8759CC-C115-4E27-9545-D25E2CDA9412}.Release|x64.ActiveCfg = Release|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Debug|Win32.ActiveCfg = Debug|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Debug|Win32.Build.0 = Debug|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Debug|x64.ActiveCfg = Debug|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|Win32.ActiveCfg = Release|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|Win32.Build.0 = Release|Win32
+		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
