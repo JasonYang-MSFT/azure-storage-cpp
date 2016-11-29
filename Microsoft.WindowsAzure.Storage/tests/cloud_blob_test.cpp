@@ -700,4 +700,37 @@ SUITE(Blob)
             CHECK_EQUAL(web::http::status_codes::Conflict, m_context.request_results().back().http_status_code());
         }
     }
+
+    /// <summary>
+    /// Test parallel download
+    /// </summary>
+    TEST_FIXTURE(blob_test_base, parallel_download)
+    {
+        // upload to target blob.
+        auto blob_name = get_random_string(20);
+        auto blob = m_container.get_block_blob_reference(blob_name);
+        concurrency::streams::istream stream;
+        stream.streambuf().alloc(100 * 1024 * 1024);
+        azure::storage::blob_request_options option;
+        option.set_parallelism_factor(10);
+        blob.upload_from_stream(stream, azure::storage::access_condition(), option, m_context);
+
+        // download target blob in parallel.
+        concurrency::streams::ostream download_stream;
+        blob.download_to_stream(download_stream, azure::storage::access_condition(), option, m_context);
+
+        // update the target blob while download target blob.
+
+        // download blob smaller than 32MB.
+
+        // blob with size 32MB~64MB.
+
+        // download blob larger than 64MB.
+
+        // transactional md5 enabled.
+
+        // download blob smaller than 4MB
+
+        // download blob 4MB to 8MB.
+    }
 }

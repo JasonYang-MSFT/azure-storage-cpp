@@ -546,16 +546,34 @@ namespace azure { namespace storage {
             // if download a whole blob, enable download strategy(download 32MB first).
             if (offset >= std::numeric_limits<utility::size64_t>::max())
             {
+                utility::size64_t single_blob_download_threshold(protocol::default_single_blob_download_threshold);
+                if (options.use_transactional_md5())
+                {
+                    single_blob_download_threshold = protocol::default_single_block_download_threshold;
+                }
                 // download first 32MB
                 // if 416 thrown, it's an empty blob. need to download attributes.
                 // otherwise, properties must be updated for further parallel download.
                 try
                 {
-                    return instance->download_single_range_to_stream_async(target, 0, protocol::default_single_blob_download_threshold, condition, options, context).then([=]()
+                    return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context).then([=]()
                     {
-                        if (instance->properties().size() > protocol::default_single_blob_download_threshold)
+                        if (instance->properties().size() > single_blob_download_threshold)
                         {
-                            instance->download_range_to_stream_async(target, protocol::default_single_blob_download_threshold, instance->properties().size() - protocol::default_single_blob_download_threshold, condition, options, context);
+                            access_condition modified_condition(condition);
+                            if (condition.if_match_etag().empty())
+                            {
+                                modified_condition.set_if_match_etag(instance->properties().etag());
+                            }
+
+                            if (instance->properties().size() < 2 * single_blob_download_threshold)
+                            {
+                                instance->download_single_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
+                            }
+                            else
+                            {
+                                instance->download_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
+                            }
                         }
                     });
                 }
