@@ -390,11 +390,14 @@ namespace azure { namespace storage {
         concurrency::streams::ostream::pos_type m_target_offset;
     };
 
-    pplx::task<void> cloud_blob::download_single_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t offset, utility::size64_t length, const access_condition& condition, const blob_request_options& options, operation_context context)
+    pplx::task<void> cloud_blob::download_single_range_to_stream_async(concurrency::streams::ostream target, utility::size64_t offset, utility::size64_t length, const access_condition& condition, const blob_request_options& options, operation_context context, bool update_properties)
     {
         blob_request_options modified_options(options);
         modified_options.apply_defaults(service_client().default_request_options(), blob_type::unspecified);
 
+        auto properties = m_properties;
+        auto metadata = m_metadata;
+        auto copy_state = m_copy_state;
         const utility::string_t& current_snapshot_time = snapshot_time();
 
         std::shared_ptr<blob_download_info> download_info = std::make_shared<blob_download_info>();
@@ -477,7 +480,7 @@ namespace azure { namespace storage {
 
             return true;
         });
-        command->set_preprocess_response([weak_command, offset, modified_options, download_info](const web::http::http_response& response, const request_result& result, operation_context context)
+        command->set_preprocess_response([weak_command, offset, modified_options, properties, metadata, copy_state, download_info, update_properties](const web::http::http_response& response, const request_result& result, operation_context context)
         {
             std::shared_ptr<core::storage_command<void>> command(weak_command);
 
@@ -500,6 +503,13 @@ namespace azure { namespace storage {
 
             if (!download_info->m_are_properties_populated)
             {
+                if (update_properties == true)
+                {
+                    properties->update_all(protocol::blob_response_parsers::parse_blob_properties(response), offset != std::numeric_limits<utility::size64_t>::max());
+                    *metadata = protocol::parse_metadata(response);
+                    *copy_state = protocol::response_parsers::parse_copy_state(response);
+                }
+
                 download_info->m_response_length = result.content_length();
                 download_info->m_response_md5 = result.content_md5();
 
@@ -556,7 +566,7 @@ namespace azure { namespace storage {
                 // otherwise, properties must be updated for further parallel download.
                 try
                 {
-                    return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context).then([=]()
+                    return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context, true).then([=]()
                     {
                         if (instance->properties().size() > single_blob_download_threshold)
                         {
@@ -630,7 +640,7 @@ namespace azure { namespace storage {
                                 {
                                     pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                     target.streambuf().seekpos(current_offset, std::ios_base::out);
-                                    target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                    target.streambuf().putn_nocopy(buffer.collection().data(), buffer.collection().size()).wait();
                                     released = true;
                                     semaphore->unlock();
                                 }
@@ -640,7 +650,7 @@ namespace azure { namespace storage {
                                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                         if (*smallest_offset == current_offset)
                                         {
-                                            target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                            target.streambuf().putn_nocopy(buffer.collection().data(), buffer.collection().size()).wait();
                                             *smallest_offset += protocol::max_block_size;
                                             condition_variable->notify_all();
                                             released = true;
@@ -669,7 +679,7 @@ namespace azure { namespace storage {
 
                                             if (*smallest_offset == current_offset)
                                             {
-                                                target.streambuf().putn_nocopy(&buffer.collection()[0], buffer.collection().size()).wait();
+                                                target.streambuf().putn_nocopy(buffer.collection().data(), buffer.collection().size()).wait();
                                                 *smallest_offset += protocol::max_block_size;
                                             }
                                             else if (*smallest_offset > current_offset)

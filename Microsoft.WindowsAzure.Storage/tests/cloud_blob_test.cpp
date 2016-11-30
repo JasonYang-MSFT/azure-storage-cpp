@@ -709,28 +709,74 @@ SUITE(Blob)
         // upload to target blob.
         auto blob_name = get_random_string(20);
         auto blob = m_container.get_block_blob_reference(blob_name);
-        concurrency::streams::istream stream;
-        stream.streambuf().alloc(100 * 1024 * 1024);
-        azure::storage::blob_request_options option;
-        option.set_parallelism_factor(10);
-        blob.upload_from_stream(stream, azure::storage::access_condition(), option, m_context);
 
-        // download target blob in parallel.
-        concurrency::streams::ostream download_stream;
-        blob.download_to_stream(download_stream, azure::storage::access_condition(), option, m_context);
+        // download blob smaller than 32MB.
+        {
+            azure::storage::blob_request_options option;
+            option.set_parallelism_factor(2);
+            std::vector<uint8_t> data;
+            data.resize(31 * 1024 * 1024);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data, 1);
+            blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, m_context);
+
+            // download target blob in parallel.
+            azure::storage::operation_context context;
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
+            
+            check_parallelism(context, 1);
+            CHECK(download_buffer.collection().size() == 31 * 1024 * 1024);
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+        }
+
+        // blob with size 32MB~64MB.
+        {
+            azure::storage::blob_request_options option;
+            option.set_parallelism_factor(2);
+            std::vector<uint8_t> data;
+            data.resize(60 * 1024 * 1024);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data, 1);
+            blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, m_context);
+
+            // download target blob in parallel.
+            azure::storage::operation_context context;
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
+            
+            check_parallelism(context, 1);
+            CHECK(download_buffer.collection().size() == 60 * 1024 * 1024);
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+        }
+
+        // download blob larger than 64MB.
+        {
+            azure::storage::blob_request_options option;
+            option.set_parallelism_factor(10);
+            std::vector<uint8_t> data;
+            data.resize(100 * 1024 * 1024);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data, 1);
+            blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, m_context);
+
+            // download target blob in parallel.
+            azure::storage::operation_context context;
+            option.set_parallelism_factor(2);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
+            
+            CHECK(download_buffer.collection().size() == 100 * 1024 * 1024);
+            check_parallelism(context, option.parallelism_factor());
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+        }
 
         // update the target blob while download target blob.
 
-        // download blob smaller than 32MB.
 
-        // blob with size 32MB~64MB.
 
-        // download blob larger than 64MB.
 
         // transactional md5 enabled.
 
         // download blob smaller than 4MB
 
-        // download blob 4MB to 8MB.
+        // download blob 4MB to 8MB.c
     }
 }
