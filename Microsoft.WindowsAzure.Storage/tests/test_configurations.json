@@ -9,7 +9,7 @@
 		{
 			"name": "production",
 			"type": "cloud",
-			"connection_string": "DefaultEndpointsProtocol=https;AccountName=myaccountname;AccountKey=myaccountkey"
+			"connection_string": "DefaultEndpointsProtocol=https;AccountName=jasonphptest2;AccountKey=vrP8JReS8JP3dp7ChgCOmCKIOXtvnZzU68k9601Zk17RJBjZI+F75PfofhLwcodUh+3RRTxxg1//N8mwL7LLgg=="
 		}
 	]
 }

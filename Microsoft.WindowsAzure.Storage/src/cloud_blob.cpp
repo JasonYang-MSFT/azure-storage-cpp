@@ -557,47 +557,51 @@ namespace azure { namespace storage {
             if (offset >= std::numeric_limits<utility::size64_t>::max())
             {
                 utility::size64_t single_blob_download_threshold(protocol::default_single_blob_download_threshold);
+                // If tranactional md5 validation is set, first range should be 4MB.
                 if (options.use_transactional_md5())
                 {
                     single_blob_download_threshold = protocol::default_single_block_download_threshold;
                 }
-                // download first 32MB
+                // download first range.
                 // if 416 thrown, it's an empty blob. need to download attributes.
                 // otherwise, properties must be updated for further parallel download.
-                try
+                return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context, true).then([=](pplx::task<void> download_task)
                 {
-                    return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context, true).then([=]()
+                    try
                     {
-                        if (instance->properties().size() > single_blob_download_threshold)
+                        download_task.wait();
+                    }
+                    catch (storage_exception &e)
+                    {
+                        if (e.result().http_status_code() == web::http::status_codes::RangeNotSatisfiable)
                         {
-                            access_condition modified_condition(condition);
-                            if (condition.if_match_etag().empty())
-                            {
-                                modified_condition.set_if_match_etag(instance->properties().etag());
-                            }
-
-                            if (instance->properties().size() < 2 * single_blob_download_threshold)
-                            {
-                                instance->download_single_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
-                            }
-                            else
-                            {
-                                instance->download_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
-                            }
+                            return instance->download_attributes_async(condition, options, context);
                         }
-                    });
-                }
-                catch (storage_exception &e)
-                {
-                    if (e.result().http_status_code() == web::http::status_codes::RangeNotSatisfiable)
-                    {
-                        return instance->download_attributes_async(condition, options, context);
+                        else
+                        {
+                            throw;
+                        }
                     }
-                    else
+
+                    if (instance->properties().size() > single_blob_download_threshold)
                     {
-                        throw;
+                        access_condition modified_condition(condition);
+                        if (condition.if_match_etag().empty())
+                        {
+                            modified_condition.set_if_match_etag(instance->properties().etag());
+                        }
+
+                        if (instance->properties().size() < 2 * single_blob_download_threshold)
+                        {
+                            return instance->download_single_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
+                        }
+                        else
+                        {
+                            return instance->download_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
+                        }
                     }
-                }
+                    return pplx::task_from_result();
+                });
             }
             // download a range of the blob, enable parallel.
             else
