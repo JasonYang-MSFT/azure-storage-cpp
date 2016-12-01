@@ -2,7 +2,7 @@ include_directories(${Boost_INCLUDE_DIR} ${OPENSSL_INCLUDE_DIR})
 include_directories(${AZURESTORAGE_INCLUDE_DIRS})
 
 # THE ORDER OF FILES IS VERY /VERY/ IMPORTANT
-if(UNIX)
+if(UNIX OR WIN32)
   set(SOURCES
      xmlhelpers.cpp
      response_parsers.cpp
@@ -72,6 +72,9 @@ endif()
 add_library(${AZURESTORAGE_LIBRARY} ${SOURCES})
 
 target_link_libraries(${AZURESTORAGE_LIBRARIES})
+if(WIN32)
+  target_link_libraries(${AZURESTORAGE_LIBRARY} Ws2_32.lib rpcrt4.lib xmllite.lib bcrypt.lib) 
+endif()
 
 # Portions specific to azure storage binary versioning and installation.
 if(UNIX)
@@ -82,6 +85,16 @@ if(UNIX)
   install(
     TARGETS ${AZURESTORAGE_LIBRARY}
     LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    )
+elseif(WIN32)
+  install(FILES ${WAS_HEADERS} DESTINATION include/was)
+  install(FILES ${WASCORE_HEADERS} DESTINATION include/wascore)
+  install(FILES ${WASCORE_DATA} DESTINATION include/wascore)
+  install(
+    TARGETS ${AZURESTORAGE_LIBRARY}
+    RUNTIME DESTINATION bin
+	LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     )
 endif()
