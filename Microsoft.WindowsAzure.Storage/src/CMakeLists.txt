@@ -64,9 +64,9 @@ if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
 endif()
 if (APPLE)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARNINGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARNINGS}")
 else()
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
 add_library(${AZURESTORAGE_LIBRARY} ${SOURCES})
@@ -94,7 +94,7 @@ elseif(WIN32)
   install(
     TARGETS ${AZURESTORAGE_LIBRARY}
     RUNTIME DESTINATION bin
-	LIBRARY DESTINATION lib
+    LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     )
 endif()
