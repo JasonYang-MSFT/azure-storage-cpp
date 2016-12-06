@@ -1,10 +1,6 @@
 set(CMAKE_LEGACY_CYGWIN_WIN32 0)
 cmake_minimum_required(VERSION 2.6)
-if(WIN32)
-  project(wastorage)
-else()
-  project(azurestorage)
-endif()
+project(azurestorage)
 
 enable_testing()
 
@@ -55,30 +51,22 @@ if(UNIX)
     find_package(UnitTest++ REQUIRED)
   endif()
 
-  option(BUILD_SHARED_LIBS "Build shared Libraries." ON)
 
-  file(GLOB WAS_HEADERS includes/was/*.h)
-  install(FILES ${WAS_HEADERS} DESTINATION include/was)
-  file(GLOB WASCORE_HEADERS includes/wascore/*.h)
-  install(FILES ${WASCORE_HEADERS} DESTINATION include/wascore)
-  file(GLOB WASCORE_DATA includes/wascore/*.dat)
-  install(FILES ${WASCORE_DATA} DESTINATION include/wascore)
 elseif(WIN32)
   message("-- Setting WIN32 options")
   find_package(Casablanca REQUIRED)
   add_definitions(-DUNICODE -D_UNICODE -D_WIN32)
-  option(BUILD_SHARED_LIBS "Build shared Libraries." ON)
-  option(WASTORE_INSTALL_HEADERS "Install header files." ON)
-  if(WASTORE_INSTALL_HEADERS)
-    include_directories(includes)
-    file(GLOB WAS_HEADERS includes/was/*.h)
-    file(GLOB WASCORE_HEADERS includes/wascore/*.h)
-    file(GLOB WASCORE_DATA includes/wascore/*.dat)
-  endif()
 else()
   message("-- Unsupported Build Platform.")
 endif()
 
+option(BUILD_SHARED_LIBS "Build shared Libraries." ON)
+option(WASTORE_INSTALL_HEADERS "Install header files." ON)
+if(WASTORE_INSTALL_HEADERS)
+  file(GLOB WAS_HEADERS includes/was/*.h)
+  file(GLOB WASCORE_HEADERS includes/wascore/basic_types.h includes/wascore/constants.h)
+  file(GLOB WASCORE_DATA includes/wascore/*.dat)
+endif()
 
 # Compiler (not platform) specific settings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
@@ -125,29 +113,16 @@ else()
   message("-- Unknown compiler, success is doubtful.")
 endif()
 
-if (WIN32)
-  # Reconfigure final output directory
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
+# Reconfigure final output directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
 
-  set(AZURESTORAGE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-  set(AZURESTORAGE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/includes ${CASABLANCA_INCLUDE_DIRS})
+set(AZURESTORAGE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/includes)
+set(AZURESTORAGE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/includes ${CASABLANCA_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS} ${LibXML++_INCLUDE_DIRS} ${UUID_INCLUDE_DIRS} ${Glibmm_INCLUDE_DIRS})
 
-  set(AZURESTORAGE_LIBRARY wastorage)
-  set(AZURESTORAGE_LIBRARIES ${AZURESTORAGE_LIBRARY} ${CASABLANCA_LIBRARIES})
-else()
-  # Reconfigure final output directory
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
-
-  set(AZURESTORAGE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/includes)
-  set(AZURESTORAGE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/includes ${CASABLANCA_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIRS} ${LibXML++_INCLUDE_DIRS} ${UUID_INCLUDE_DIRS} ${Glibmm_INCLUDE_DIRS})
-
-  set(AZURESTORAGE_LIBRARY azurestorage)
-  set(AZURESTORAGE_LIBRARIES ${AZURESTORAGE_LIBRARY} ${CASABLANCA_LIBRARIES} ${Boost_LIBRARIES} ${Boost_FRAMEWORK} ${OPENSSL_LIBRARIES} ${LibXML++_LIBRARIES} ${UUID_LIBRARIES} ${Glibmm_LIBRARIES})
-endif()
+set(AZURESTORAGE_LIBRARY azurestorage)
+set(AZURESTORAGE_LIBRARIES ${AZURESTORAGE_LIBRARY} ${CASABLANCA_LIBRARIES} ${Boost_LIBRARIES} ${Boost_FRAMEWORK} ${OPENSSL_LIBRARIES} ${LibXML++_LIBRARIES} ${UUID_LIBRARIES} ${Glibmm_LIBRARIES})
 
 # Set version numbers centralized
 set (AZURESTORAGE_VERSION_MAJOR 2)

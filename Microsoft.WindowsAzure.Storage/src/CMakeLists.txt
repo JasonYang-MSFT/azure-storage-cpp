@@ -69,6 +69,18 @@ else()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
+if(MSVC)
+  add_compile_options(/Yustdafx.h)
+  set_source_files_properties(stdafx.cpp PROPERTIES COMPILE_FLAGS "/Ycstdafx.h")
+
+  if (NOT CMAKE_GENERATOR MATCHES "Visual Studio .*")
+    set_property(SOURCE stdafx.cpp APPEND PROPERTY OBJECT_OUTPUTS "${CMAKE_CURRENT_BINARY_DIR}/stdafx.pch")
+    set_property(SOURCE ${SOURCES} APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/stdafx.pch")
+  endif()
+
+  list(APPEND SOURCES stdafx.cpp)
+endif()
+
 add_library(${AZURESTORAGE_LIBRARY} ${SOURCES})
 
 target_link_libraries(${AZURESTORAGE_LIBRARIES})
@@ -81,20 +93,17 @@ if(UNIX)
   set_target_properties(${AZURESTORAGE_LIBRARY} PROPERTIES
     SOVERSION ${AZURESTORAGE_VERSION_MAJOR}
     VERSION ${AZURESTORAGE_VERSION_MAJOR}.${AZURESTORAGE_VERSION_MINOR})
-
-  install(
-    TARGETS ${AZURESTORAGE_LIBRARY}
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    )
 elseif(WIN32)
-  install(FILES ${WAS_HEADERS} DESTINATION include/was)
-  install(FILES ${WASCORE_HEADERS} DESTINATION include/wascore)
-  install(FILES ${WASCORE_DATA} DESTINATION include/wascore)
-  install(
-    TARGETS ${AZURESTORAGE_LIBRARY}
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    )
+  set_target_properties(${AZURESTORAGE_LIBRARY} PROPERTIES OUTPUT_NAME "wastorage")
 endif()
+
+install(FILES ${WAS_HEADERS} DESTINATION include/was)
+install(FILES ${WASCORE_HEADERS} DESTINATION include/wascore)
+install(FILES ${WASCORE_DATA} DESTINATION include/wascore)
+
+install(
+  TARGETS ${AZURESTORAGE_LIBRARY}
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+)
