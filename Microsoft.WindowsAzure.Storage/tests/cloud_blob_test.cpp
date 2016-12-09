@@ -746,7 +746,7 @@ SUITE(Blob)
             concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
             blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
 
-            check_parallelism(context, 1);
+            check_parallelism(context, 2);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
