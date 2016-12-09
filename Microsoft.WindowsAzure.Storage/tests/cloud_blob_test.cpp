@@ -729,11 +729,11 @@ SUITE(Blob)
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
         }
 
-        // blob with size 32MB~64MB.
+        // blob with size larger than 32MB.
         {
             auto blob_name = get_random_string(20);
             auto blob = m_container.get_block_blob_reference(blob_name);
-            size_t target_length = 33 * 1024 * 1024;
+            size_t target_length = 100 * 1024 * 1024;
             azure::storage::blob_request_options option;
             option.set_parallelism_factor(2);
             std::vector<uint8_t> data;
@@ -747,30 +747,6 @@ SUITE(Blob)
             blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
 
             check_parallelism(context, 1);
-            CHECK(blob.properties().size() == target_length);
-            CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
-        }
-
-        // download blob larger than 64MB.
-        {
-            auto blob_name = get_random_string(20);
-            auto blob = m_container.get_block_blob_reference(blob_name);
-            size_t target_length = 100 * 1024 * 1024;
-            azure::storage::blob_request_options option;
-            option.set_parallelism_factor(10);
-            std::vector<uint8_t> data;
-            data.resize(target_length);
-            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data, 1);
-            blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, m_context);
-
-            // download target blob in parallel.
-            azure::storage::operation_context context;
-            option.set_parallelism_factor(2);
-            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
-            blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
-
-            check_parallelism(context, option.parallelism_factor());
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
@@ -804,11 +780,11 @@ SUITE(Blob)
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
         }
 
-        // blob with size 4MB~8MB.
+        // download blob larger than 4MB.
         {
             auto blob_name = get_random_string(20);
             auto blob = m_container.get_block_blob_reference(blob_name);
-            size_t target_length = 5 * 1024 * 1024;
+            size_t target_length = 21 * 1024 * 1024;
             azure::storage::blob_request_options option;
             option.set_parallelism_factor(2);
             option.set_use_transactional_md5(true);
@@ -822,37 +798,13 @@ SUITE(Blob)
             concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
             blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
 
-            check_parallelism(context, 1);
-            CHECK(blob.properties().size() == target_length);
-            CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
-        }
-
-        // download blob larger than 8MB.
-        {
-            auto blob_name = get_random_string(20);
-            auto blob = m_container.get_block_blob_reference(blob_name);
-            size_t target_length = 32 * 1024 * 1024;
-            azure::storage::blob_request_options option;
-            option.set_parallelism_factor(10);
-            option.set_use_transactional_md5(true);
-            std::vector<uint8_t> data;
-            data.resize(target_length);
-            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data, 1);
-            blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, m_context);
-
-            // download target blob in parallel.
-            azure::storage::operation_context context;
-            option.set_parallelism_factor(2);
-            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
-            blob.download_to_stream(download_buffer.create_ostream(), azure::storage::access_condition(), option, context);
-
-            check_parallelism(context, option.parallelism_factor());
+            check_parallelism(context, 2);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
         }
     }
+
     TEST_FIXTURE(blob_test_base, parallel_download_empty_blob)
     {
         auto blob_name = get_random_string(20);

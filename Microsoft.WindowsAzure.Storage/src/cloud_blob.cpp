@@ -554,97 +554,104 @@ namespace azure { namespace storage {
         {
             auto instance = std::make_shared<cloud_blob>(*this);
             // if download a whole blob, enable download strategy(download 32MB first).
-            if (offset >= std::numeric_limits<utility::size64_t>::max())
+            utility::size64_t single_blob_download_threshold(protocol::default_single_blob_download_threshold);
+            // If tranactional md5 validation is set, first range should be 4MB.
+            if (options.use_transactional_md5())
             {
-                utility::size64_t single_blob_download_threshold(protocol::default_single_blob_download_threshold);
-                // If tranactional md5 validation is set, first range should be 4MB.
-                if (options.use_transactional_md5())
-                {
-                    single_blob_download_threshold = protocol::default_single_block_download_threshold;
-                }
-                // download first range.
-                // if 416 thrown, it's an empty blob. need to download attributes.
-                // otherwise, properties must be updated for further parallel download.
-                return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context, true).then([=](pplx::task<void> download_task)
-                {
-                    try
-                    {
-                        download_task.wait();
-                    }
-                    catch (storage_exception &e)
-                    {
-                        if (e.result().http_status_code() == web::http::status_codes::RangeNotSatisfiable)
-                        {
-                            return instance->download_attributes_async(condition, options, context);
-                        }
-                        else
-                        {
-                            throw;
-                        }
-                    }
-
-                    if (instance->properties().size() > single_blob_download_threshold)
-                    {
-                        access_condition modified_condition(condition);
-                        if (condition.if_match_etag().empty())
-                        {
-                            modified_condition.set_if_match_etag(instance->properties().etag());
-                        }
-
-                        if (instance->properties().size() < 2 * single_blob_download_threshold)
-                        {
-                            return instance->download_single_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
-                        }
-                        else
-                        {
-                            return instance->download_range_to_stream_async(target, single_blob_download_threshold, instance->properties().size() - single_blob_download_threshold, modified_condition, options, context);
-                        }
-                    }
-                    return pplx::task_from_result();
-                });
+                single_blob_download_threshold = protocol::default_single_block_download_threshold;
             }
-            // download a range of the blob, enable parallel.
-            else
+
+
+            // download first range.
+            // if 416 thrown, it's an empty blob. need to download attributes.
+            // otherwise, properties must be updated for further parallel download.
+            return instance->download_single_range_to_stream_async(target, 0, single_blob_download_threshold, condition, options, context, true).then([=](pplx::task<void> download_task)
             {
-                return pplx::task_from_result().then([instance, target, offset, length, condition, options, context]()
+                try
+                {
+                    download_task.wait();
+                }
+                catch (storage_exception &e)
+                {
+                    // For empty blob, swallow the exception and update the attributes.
+                    if (e.result().http_status_code() == web::http::status_codes::RangeNotSatisfiable
+                        && offset >= std::numeric_limits<utility::size64_t>::max())
+                    {
+                        return instance->download_attributes_async(condition, options, context);
+                    }
+                    else
+                    {
+                        throw;
+                    }
+                }
+
+                if ((offset >= std::numeric_limits<utility::size64_t>::max() && instance->properties().size() <= single_blob_download_threshold)
+                    || (offset < std::numeric_limits<utility::size64_t>::max() && length <= single_blob_download_threshold))
+                {
+                    return pplx::task_from_result();
+                }
+
+                // download the rest data in parallel.
+
+                // set up the target length.
+                utility::size64_t target_offset;
+                utility::size64_t target_length;
+
+                if (offset >= std::numeric_limits<utility::size64_t>::max())
+                {
+                    target_offset = single_blob_download_threshold;
+                    target_length = instance->properties().size() - single_blob_download_threshold;
+                }
+                else
+                {
+                    target_offset = offset + single_blob_download_threshold;
+                    target_length = length - single_blob_download_threshold;
+                }
+
+                access_condition modified_condition(condition);
+                if (condition.if_match_etag().empty())
+                {
+                    modified_condition.set_if_match_etag(instance->properties().etag());
+                }
+
+                return pplx::task_from_result().then([instance, target, target_offset, target_length, single_blob_download_threshold, modified_condition, options, context]()
                 {
                     auto semaphore = std::make_shared<core::async_semaphore>(options.parallelism_factor());
                     // lock to target ostream
                     pplx::extensibility::reader_writer_lock_t mutex;
-                    utility::size64_t source_offset = offset;
-                    utility::size64_t source_length = length;
 
                     // limit the number of parallel writer(maximum number is options.parallelism_factor()) to write to target stream. prevent OOM.
                     pplx::details::atomic_long writer(0);
 
-                    auto smallest_offset = std::make_shared<utility::size64_t>(source_offset);
+                    auto smallest_offset = std::make_shared<utility::size64_t>(target_offset);
                     auto condition_variable = std::make_shared<std::condition_variable>();
                     std::mutex  condition_variable_mutex;
-                    for (utility::size64_t current_offset = source_offset; current_offset <= source_offset + source_length; current_offset += protocol::max_block_size)
+                    for (utility::size64_t current_offset = target_offset; current_offset < target_offset + target_length; current_offset += protocol::max_block_size)
                     {
                         utility::size64_t current_length = protocol::max_block_size;
-                        if (current_offset + current_length > source_offset + source_length)
+                        if (current_offset + current_length > target_offset + target_length)
                         {
-                            current_length = source_offset + source_length - current_offset;
+                            current_length = target_offset + target_length - current_offset;
                         }
-                        semaphore->lock_async().then([instance, &mutex, semaphore, condition_variable, &condition_variable_mutex, &writer, target, smallest_offset, current_offset, current_length, condition, options, context]()
+                        semaphore->lock_async().then([instance, &mutex, semaphore, condition_variable, &condition_variable_mutex, &writer, target, smallest_offset, current_offset, current_length, modified_condition, options, context]()
                         {
                             concurrency::streams::container_buffer<std::vector<uint8_t>> buffer;
                             auto segment_ostream = buffer.create_ostream();
                             // download each trunk in 4MB
                             // trasaction MD5 should be checked inside each download_single_range_to_stream_async.
-                            instance->download_single_range_to_stream_async(segment_ostream, current_offset, current_length, condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
+                            instance->download_single_range_to_stream_async(segment_ostream, current_offset, current_length, modified_condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
                             {
                                 segment_ostream.close();
 
                                 // status of current semaphore.
                                 bool released = false;
-                                // target stream is seekable, could be write to target stream once the download finished.
+                                // target stream is seekable, could write to target stream once the download finished.
                                 if (target.can_seek())
                                 {
                                     pplx::extensibility::scoped_rw_lock_t guard(mutex);
                                     target.streambuf().seekpos(current_offset, std::ios_base::out);
                                     target.streambuf().putn_nocopy(buffer.collection().data(), buffer.collection().size()).wait();
+                                    *smallest_offset += protocol::max_block_size;
                                     released = true;
                                     semaphore->unlock();
                                 }
@@ -706,13 +713,13 @@ namespace azure { namespace storage {
                     }
                     semaphore->wait_all_async().wait();
                     std::unique_lock<std::mutex> locker(condition_variable_mutex);
-                    condition_variable->wait(locker, [smallest_offset, &mutex, source_offset, source_length]()
+                    condition_variable->wait(locker, [smallest_offset, &mutex, target_offset, target_length]()
                     {
                         pplx::extensibility::scoped_rw_lock_t guard(mutex);
-                        return *smallest_offset > source_offset + source_length;
+                        return *smallest_offset >= target_offset + target_length;
                     });
                 });
-            }
+            });
         }
 
         blob_request_options modified_options(options);
