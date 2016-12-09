@@ -726,7 +726,7 @@ SUITE(Blob)
             check_parallelism(context, 1);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
         }
 
         // blob with size larger than 32MB.
@@ -749,7 +749,7 @@ SUITE(Blob)
             check_parallelism(context, 1);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
         }
     }
 
@@ -777,7 +777,7 @@ SUITE(Blob)
             check_parallelism(context, 1);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
         }
 
         // download blob larger than 4MB.
@@ -801,7 +801,7 @@ SUITE(Blob)
             check_parallelism(context, 2);
             CHECK(blob.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
-            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin(), download_buffer.collection().end()));
+            CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
         }
     }
 
