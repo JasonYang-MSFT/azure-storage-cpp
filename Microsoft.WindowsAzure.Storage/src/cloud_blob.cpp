@@ -639,8 +639,18 @@ namespace azure { namespace storage {
                             auto segment_ostream = buffer.create_ostream();
                             // download each trunk in 4MB
                             // trasaction MD5 should be checked inside each download_single_range_to_stream_async.
-                            instance->download_single_range_to_stream_async(segment_ostream, current_offset, current_length, modified_condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options]()
+                            instance->download_single_range_to_stream_async(segment_ostream, current_offset, current_length, modified_condition, options, context).then([buffer, segment_ostream, semaphore, condition_variable, &condition_variable_mutex, smallest_offset, current_offset, current_length, &mutex, target, &writer, options](pplx::task<void> download_task)
                             {
+                                try
+                                {
+                                    download_task.wait();
+                                }
+                                catch (const storage_exception& e)
+                                {
+                                    segment_ostream.close();
+                                    throw e;
+                                }
+
                                 segment_ostream.close();
 
                                 // status of current semaphore.
