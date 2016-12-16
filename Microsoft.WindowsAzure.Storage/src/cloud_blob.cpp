@@ -647,11 +647,11 @@ namespace azure { namespace storage {
                                 }
                                 catch (const storage_exception& e)
                                 {
-                                    segment_ostream.close();
+                                    segment_ostream.close().wait();
                                     throw e;
                                 }
 
-                                segment_ostream.close();
+                                segment_ostream.close().wait();
 
                                 // status of current semaphore.
                                 bool released = false;
