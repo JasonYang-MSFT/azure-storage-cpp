@@ -61,17 +61,30 @@ int Performance::single_download_test(size_t length, int parallelism)
 {
     azure::storage::cloud_blob_container container = client.get_container_reference(L"perftests");
     container.create_if_not_exists();
-    azure::storage::cloud_block_blob blob = container.get_block_blob_reference(L"target");
+    azure::storage::cloud_append_blob blob = container.get_append_blob_reference(L"target");
 
     // upload data
     size_t target_length = length * 1024 * 1024;
     azure::storage::blob_request_options option;
     option.set_parallelism_factor(5);
     option.set_use_transactional_md5(true);
-    std::vector<uint8_t> data;
-    data.resize(target_length);
-    concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
-    blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
+    if (length <= 100)
+    {
+        std::vector<uint8_t> data;
+        data.resize(1 * 1024 * 1024);
+        concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+        blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
+    }
+    else
+    {
+        std::vector<uint8_t> data;
+        data.resize(100 * 1024 * 1024);
+        concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+        for (int len = 0; len < length; len += 100)
+        {
+            blob.append_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
+        }
+    }
 
     // download data
     option.set_parallelism_factor(parallelism);
@@ -87,18 +100,30 @@ int Performance::single_download_test_filestream(size_t length, int parallelism)
 {
     azure::storage::cloud_blob_container container = client.get_container_reference(L"perftests");
     container.create_if_not_exists();
-    azure::storage::cloud_block_blob blob = container.get_block_blob_reference(L"target");
+    azure::storage::cloud_append_blob blob = container.get_append_blob_reference(L"target");
 
     // upload data
     size_t target_length = length * 1024 * 1024;
     azure::storage::blob_request_options option;
     option.set_parallelism_factor(5);
     option.set_use_transactional_md5(true);
-    std::vector<uint8_t> data;
-    data.resize(target_length);
-    concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
-    blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
-
+    if (length <= 100)
+    {
+        std::vector<uint8_t> data;
+        data.resize(1 * 1024 * 1024);
+        concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+        blob.upload_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
+    }
+    else
+    {
+        std::vector<uint8_t> data;
+        data.resize(100 * 1024 * 1024);
+        concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+        for (int len = 0; len < length; len += 100)
+        {
+            blob.append_from_stream(upload_buffer.create_istream(), azure::storage::access_condition(), option, azure::storage::operation_context());
+        }
+    }
     // download data
     option.set_parallelism_factor(parallelism);
     concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
