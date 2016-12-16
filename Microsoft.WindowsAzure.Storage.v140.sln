@@ -9,6 +9,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Microsoft.WindowsAzure.Stor
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UnitTest++.vsnet2005", "Microsoft.WindowsAzure.Storage\tests\UnitTest++\UnitTest++.vsnet2005.vcxproj", "{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Tuning", "Tuning\Tuning.vcxproj", "{CBAB84BB-300A-4697-B1D1-6E897DDF6155}"
+	ProjectSection(ProjectDependencies) = postProject
+		{25D342C3-6CDA-44DD-A16A-32A19B692785} = {25D342C3-6CDA-44DD-A16A-32A19B692785}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -37,6 +42,14 @@ Global
 		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|Win32.ActiveCfg = Release|Win32
 		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|Win32.Build.0 = Release|Win32
 		{64A4FEFE-0461-4E95-8CC1-91EF5F57DBC6}.Release|x64.ActiveCfg = Release|Win32
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Debug|Win32.ActiveCfg = Debug|Win32
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Debug|Win32.Build.0 = Debug|Win32
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Debug|x64.ActiveCfg = Debug|x64
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Debug|x64.Build.0 = Debug|x64
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Release|Win32.ActiveCfg = Release|Win32
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Release|Win32.Build.0 = Release|Win32
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Release|x64.ActiveCfg = Release|x64
+		{CBAB84BB-300A-4697-B1D1-6E897DDF6155}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
