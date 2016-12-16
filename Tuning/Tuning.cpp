@@ -40,7 +40,7 @@ public:
     utility::string_t download_test_filestream()
     {
         utility::stringstream_t out;
-        std::vector<size_t> lens{ 3, 30, 100 };
+        std::vector<size_t> lens{ 3, 30, 100, 1000};
         for (size_t index = 0; index < lens.size(); ++index)
         {
             size_t length(lens[index]);
