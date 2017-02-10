@@ -629,6 +629,8 @@ namespace azure { namespace storage { namespace core {
 
                         instance->m_current_location = retry.target_location();
                         instance->m_current_location_mode = retry.updated_location_mode();
+                        instance->m_hash_provider.close();
+                        instance->m_is_hashing_started = false;
 
                         if (instance->m_response_streambuf)
                         {
