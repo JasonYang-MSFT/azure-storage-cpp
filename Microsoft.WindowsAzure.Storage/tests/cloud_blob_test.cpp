@@ -719,6 +719,16 @@ SUITE(Blob)
     /// <summary>
     /// Test parallel download
     /// </summary>
+    TEST_FIXTURE(block_blob_test_base, parallel_upload)
+    {
+        azure::storage::blob_request_options options;
+        options.set_parallelism_factor(20);
+        m_blob.upload_from_file(L"4gb.txt", azure::storage::access_condition(), options, azure::storage::operation_context());
+    }
+
+    /// <summary>
+    /// Test parallel download
+    /// </summary>
     TEST_FIXTURE(blob_test_base, parallel_download)
     {
         // download blob smaller than 32MB.
