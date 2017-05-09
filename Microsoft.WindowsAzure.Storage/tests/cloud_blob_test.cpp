@@ -723,7 +723,7 @@ SUITE(Blob)
     {
         azure::storage::blob_request_options options;
         options.set_parallelism_factor(20);
-        m_blob.upload_from_file(L"4gb.txt", azure::storage::access_condition(), options, azure::storage::operation_context());
+        m_blob.upload_from_file( utility::string_t(L"4gb.txt"), azure::storage::access_condition(), options, azure::storage::operation_context());
     }
 
     /// <summary>
