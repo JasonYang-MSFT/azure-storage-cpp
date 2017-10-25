@@ -231,7 +231,7 @@ namespace azure { namespace storage { namespace protocol {
         {
             state.m_status = parse_copy_status(status);
             state.m_copy_id = get_header_value(headers, ms_header_copy_id);
-            state.m_source = get_header_value(headers, ms_header_copy_source);
+            state.m_source = web::http::uri::encode_uri(get_header_value(headers, ms_header_copy_source));
             state.m_completion_time = parse_datetime(get_header_value(headers, ms_header_copy_completion_time));
             state.m_status_description = get_header_value(headers, ms_header_copy_status_description);
             state.m_destination_snapshot_time = parse_datetime(get_header_value(headers, ms_header_copy_destination_snapshot), utility::datetime::date_format::ISO_8601);
