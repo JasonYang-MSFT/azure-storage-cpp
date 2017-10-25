@@ -20,6 +20,9 @@
 
 #include "cpprest/details/basic_types.h"
 
+#pragma push_macro("min")
+#undef min
+
 #ifdef _NO_WASTORAGE_API
     #define WASTORAGE_API
 #else
@@ -107,3 +110,5 @@ namespace utility {
     }
 
 } // namespace utility
+
+#pragma pop_macro("min")
