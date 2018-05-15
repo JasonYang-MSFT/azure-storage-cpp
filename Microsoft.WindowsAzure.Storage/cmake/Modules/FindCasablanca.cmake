@@ -23,10 +23,21 @@ find_path(CASABLANCA_INCLUDE_DIR
     include
 )
 
+find_package(cpprestsdk)
+
+if(cpprestsdk_FOUND)
+  set(CASABLANCA_LIBRARY cpprestsdk::cpprest)
+  set(CASABLANCA_PROCESS_LIBS CASABLANCA_LIBRARY)
+  set(CASABLANCA_PROCESS_INCLUDES CASABLANCA_INCLUDE_DIR)
+  libfind_process(CASABLANCA)
+  return()
+endif()
+
 # Library
 find_library(CASABLANCA_LIBRARY
   NAMES 
     cpprest
+    cpprest_2_9.lib
   PATHS 
     ${CASABLANCA_PKGCONF_LIBRARY_DIRS}
     ${CASABLANCA_DIR}
