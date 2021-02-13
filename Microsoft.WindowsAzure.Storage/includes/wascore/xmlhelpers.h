@@ -47,8 +47,7 @@
 #include <atlbase.h>
 #include <xmllite.h>
 #else
-#include <libxml++/parsers/textreader.h>
-#include <libxml++/document.h>
+#include "wascore/xml_wrapper.h"
 #include <stack>
 #endif 
 
@@ -65,13 +64,34 @@ class xml_reader
 {
 public:
 
+    /// <summary>
+    /// An enumeration describing result of the parse() operation.
+    /// </summary>
+    enum parse_result
+    {
+        /// <summary>
+        /// Parsed is finished and cannot be continued.
+        /// </summary>
+        cannot_continue = 0,
+
+        /// <summary>
+        /// Parse is paused and can be continued.
+        /// </summary>
+        can_continue = 1,
+
+        /// <summary>
+        /// Exited because XML is not complete.
+        /// </summary>
+        xml_not_complete = 2,
+    };
+
     virtual ~xml_reader() {}
 
     /// <summary>
-    /// Parse the given xml string/stream. Returns true if it finished parsing the stream to the end, and false
-    /// if it was asked to exit early via pause()
+    /// Parse the given xml string/stream. Return value indicates if
+    /// the parsing was successful.
     /// </summary>
-    bool parse();
+    parse_result parse();
 
 protected:
 
@@ -168,7 +188,7 @@ protected:
 #ifdef _WIN32
     CComPtr<IXmlReader> m_reader;
 #else
-    std::shared_ptr<xmlpp::TextReader> m_reader;
+    std::shared_ptr<xml_text_reader_wrapper> m_reader;
     std::string m_data;
 #endif 
 
@@ -187,7 +207,12 @@ public:
     virtual ~xml_writer() {}
 
 protected:
+
+#ifdef _WIN32
     xml_writer()
+#else // LINUX
+    xml_writer() :m_stream(nullptr)
+#endif
     {
     }
 
@@ -270,8 +295,8 @@ private:
 #ifdef _WIN32
     CComPtr<IXmlWriter> m_writer;
 #else // LINUX
-    std::shared_ptr<xmlpp::Document> m_document;
-    std::stack<xmlpp::Element*> m_elementStack;
+    std::shared_ptr<xml_document_wrapper> m_document;
+    std::stack<xml_element_wrapper*> m_elementStack;
     std::ostream * m_stream;
 #endif
 };

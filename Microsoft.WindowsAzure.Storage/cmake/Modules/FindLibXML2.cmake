@@ -14,14 +14,19 @@
 # Variables defined by this module:
 #
 #  LIBXML2_FOUND              System has LibXML2 libs/headers
-#  LibXML2_LIBRARIES          The LibXML2 libraries
+#  LibXML2_LIBRARY          The LibXML2 libraries
 #  LibXML2_INCLUDE_DIR        The location of LibXML2 headers
+
+include(LibFindMacros)
+
+# Use pkg-config to get hints about paths
+libfind_pkg_check_modules(LibXML2_PKGCONF libxml2)
 
 find_path(LibXML2_ROOT_DIR
     NAMES include/libxml2/libxml/tree.h
 )
 
-find_library(LibXML2_LIBRARIES
+find_library(LibXML2_LIBRARY
     NAMES xml2
     HINTS ${LibXML2_ROOT_DIR}/lib
 )
@@ -31,14 +36,7 @@ find_path(LibXML2_INCLUDE_DIR
     HINTS ${LibXML2_ROOT_DIR}/include/libxml2
 )
 
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(LibXML2 DEFAULT_MSG
-    LibXML2_LIBRARIES
-    LibXML2_INCLUDE_DIR
-)
+set(LibXML2_PROCESS_LIBS LibXML2_LIBRARY)
+set(LibXML2_PROCESS_INCLUDES LibXML2_INCLUDE_DIR)
 
-mark_as_advanced(
-    LibXML2_ROOT_DIR
-    LibXML2_LIBRARIES
-    LibXML2_INCLUDE_DIR
-)
+libfind_process(LibXML2)

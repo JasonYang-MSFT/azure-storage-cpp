@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "blob_test_base.h"
 #include "check_macros.h"
+#include "wascore/util.h"
 
 SUITE(Core)
 {
@@ -168,4 +169,74 @@ SUITE(Core)
         CHECK_EQUAL(true, caught_storage_exception);
         CHECK_EQUAL(true, caught_http_exception);
     }
+
+#ifdef _WIN32
+    class delayed_scheduler : public azure::storage::delayed_scheduler_interface
+    {
+    public:
+        virtual void schedule_after(pplx::TaskProc_t function, void* context, long long delayInMs) override
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayInMs));
+            function(context);
+        }
+    };
+
+    TEST_FIXTURE(block_blob_test_base, verify_retry_after_delay)
+    {
+        azure::storage::set_wastorage_ambient_delayed_scheduler(std::make_shared<delayed_scheduler>());
+
+        const size_t buffer_size = 1024;
+        std::vector<uint8_t> buffer;
+        buffer.resize(buffer_size);
+        auto md5 = fill_buffer_and_get_md5(buffer);
+        auto stream = concurrency::streams::bytestream::open_istream(buffer);
+
+        azure::storage::operation_context context;
+        static bool throwException = true;
+        context.set_response_received([](web::http::http_request&, const web::http::http_response&, azure::storage::operation_context context)
+        {
+            if (throwException)
+            {
+                throwException = false;
+                throw azure::storage::storage_exception("retry");
+            }
+        });
+
+        bool failed = false;
+        try
+        {
+            m_blob.upload_block(get_block_id(0), stream, md5, azure::storage::access_condition(), azure::storage::blob_request_options(), context);
+        }
+        catch (azure::storage::storage_exception&)
+        {
+            failed = true;
+        }
+
+        azure::storage::set_wastorage_ambient_delayed_scheduler(nullptr);
+        CHECK_EQUAL(false, failed);
+        CHECK_EQUAL(false, throwException);
+    }
+
+#else
+    TEST_FIXTURE(test_base, ssl_context_callback)
+    {
+        // Test the ssl context is set to the dependency.
+        auto client = test_config::instance().account().create_cloud_blob_client();
+        CHECK_EQUAL(_XPLATSTR("https"), client.base_uri().primary_uri().scheme());// Needs to invoke ssl check for this test.
+        azure::storage::operation_context context;
+        context.set_ssl_context_callback([](boost::asio::ssl::context& context)-> void {
+            throw std::runtime_error("dummy exception"); });
+        auto container = client.get_container_reference(_XPLATSTR("this-container-does-not-exist"));
+        CHECK_THROW(container.exists(azure::storage::blob_request_options(), context), std::runtime_error);
+
+        // Test reusable client can be reused.
+        web::http::client::http_client_config config;
+        config.set_ssl_context_callback([](boost::asio::ssl::context& context)-> void {
+            throw std::runtime_error("dummy exception"); });
+        auto first_client = azure::storage::core::http_client_reusable::get_http_client(azure::storage::storage_uri(_XPLATSTR("http://www.nonexistenthost.com/test1")).primary_uri(), config);
+        auto second_client = azure::storage::core::http_client_reusable::get_http_client(azure::storage::storage_uri(_XPLATSTR("http://www.nonexistenthost.com/test1")).primary_uri(), config);
+        // check the client is identical.
+        CHECK_EQUAL(first_client, second_client);
+    }
+#endif
 }

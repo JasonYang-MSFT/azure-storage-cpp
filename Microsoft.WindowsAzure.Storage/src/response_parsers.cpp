@@ -22,6 +22,8 @@
 #include "wascore/constants.h"
 #include "wascore/resources.h"
 
+#include "cpprest/asyncrt_utils.h"
+
 namespace azure { namespace storage { namespace protocol {
 
     void preprocess_response_void(const web::http::http_response& response, const request_result& result, operation_context context)
@@ -54,7 +56,12 @@ namespace azure { namespace storage { namespace protocol {
         return get_header_value(response, web::http::header_names::etag);
     }
 
-    utility::datetime parse_last_modified(const utility::string_t& value)
+    utility::datetime parse_datetime_iso8601(const utility::string_t& value)
+    {
+        return utility::datetime::from_string(value, utility::datetime::date_format::ISO_8601);
+    }
+
+    utility::datetime parse_datetime_rfc1123(const utility::string_t& value)
     {
         return utility::datetime::from_string(value, utility::datetime::date_format::RFC_1123);
     }
@@ -64,7 +71,7 @@ namespace azure { namespace storage { namespace protocol {
         utility::string_t value;
         if (response.headers().match(web::http::header_names::last_modified, value))
         {
-            return parse_last_modified(value);
+            return parse_datetime_rfc1123(value);
         }
         else
         {
@@ -157,7 +164,7 @@ namespace azure { namespace storage { namespace protocol {
         utility::string_t value;
         if (response.headers().match(ms_header_lease_time, value))
         {
-            int64_t seconds = utility::conversions::scan_string<int64_t>(value);
+            int64_t seconds = utility::conversions::details::scan_string<int64_t>(value);
             return std::chrono::seconds(seconds);
         }
         else
@@ -166,12 +173,61 @@ namespace azure { namespace storage { namespace protocol {
         }
     }
 
+    cloud_file_attributes parse_file_attributes(const utility::string_t& value)
+    {
+        cloud_file_attributes attributes = static_cast<cloud_file_attributes>(0);
+        for (const auto& attribute : core::string_split(value, header_value_file_attribute_delimiter))
+        {
+            if (attribute == header_value_file_attribute_none)
+            {
+                attributes |= cloud_file_attributes::none;
+            }
+            else if (attribute == header_value_file_attribute_readonly)
+            {
+                attributes |= cloud_file_attributes::readonly;
+            }
+            else if (attribute == header_value_file_attribute_hidden)
+            {
+                attributes |= cloud_file_attributes::hidden;
+            }
+            else if (attribute == header_value_file_attribute_system)
+            {
+                attributes |= cloud_file_attributes::system;
+            }
+            else if (attribute == header_value_file_attribute_directory)
+            {
+                attributes |= cloud_file_attributes::directory;
+            }
+            else if (attribute == header_value_file_attribute_archive)
+            {
+                attributes |= cloud_file_attributes::archive;
+            }
+            else if (attribute == header_value_file_attribute_temporary)
+            {
+                attributes |= cloud_file_attributes::temporary;
+            }
+            else if (attribute == header_value_file_attribute_offline)
+            {
+                attributes |= cloud_file_attributes::offline;
+            }
+            else if (attribute == header_value_file_attribute_notcontentindexed)
+            {
+                attributes |= cloud_file_attributes::not_content_indexed;
+            }
+            else if (attribute == header_value_file_attribute_noscrubdata)
+            {
+                attributes |= cloud_file_attributes::no_scrub_data;
+            }
+        }
+        return attributes;
+    }
+
     int parse_approximate_messages_count(const web::http::http_response& response)
     {
         utility::string_t value;
         if (response.headers().match(ms_header_approximate_messages_count, value))
         {
-            return utility::conversions::scan_string<int>(value);
+            return utility::conversions::details::scan_string<int>(value);
         }
 
         return -1;
@@ -232,19 +288,25 @@ namespace azure { namespace storage { namespace protocol {
             state.m_status = parse_copy_status(status);
             state.m_copy_id = get_header_value(headers, ms_header_copy_id);
             state.m_source = get_header_value(headers, ms_header_copy_source);
-            state.m_completion_time = parse_copy_completion_time(get_header_value(headers, ms_header_copy_completion_time));
+            state.m_completion_time = parse_datetime(get_header_value(headers, ms_header_copy_completion_time));
             state.m_status_description = get_header_value(headers, ms_header_copy_status_description);
+            state.m_destination_snapshot_time = parse_datetime(get_header_value(headers, ms_header_copy_destination_snapshot), utility::datetime::date_format::ISO_8601);
             parse_copy_progress(get_header_value(headers, ms_header_copy_progress), state.m_bytes_copied, state.m_total_bytes);
         }
 
         return state;
     }
 
-    utility::datetime response_parsers::parse_copy_completion_time(const utility::string_t& value)
+    bool response_parsers::parse_boolean(const utility::string_t& value)
+    {
+        return value == _XPLATSTR("true");
+    }
+
+    utility::datetime response_parsers::parse_datetime(const utility::string_t& value, utility::datetime::date_format format)
     {
         if (!value.empty())
         {
-            return utility::datetime::from_string(value, utility::datetime::date_format::RFC_1123);
+            return utility::datetime::from_string(value, format);
         }
         else
         {
@@ -325,6 +387,87 @@ namespace azure { namespace storage { namespace protocol {
             details = reader.move_details();
 
             return storage_extended_error(std::move(error_code), std::move(error_message), std::move(details));
+        }
+    }
+
+    blob_container_public_access_type parse_public_access_type(const utility::string_t& value)
+    {
+        if (value == resource_blob)
+        {
+            return blob_container_public_access_type::blob;
+        }
+        else if (value == resource_container)
+        {
+            return blob_container_public_access_type::container;
+        }
+        else
+        {
+            return blob_container_public_access_type::off;
+        }
+    }
+    
+    blob_container_public_access_type parse_public_access_type(const web::http::http_response& response)
+    {
+        return parse_public_access_type(get_header_value(response.headers(), ms_header_blob_public_access));
+    }
+
+    premium_blob_tier response_parsers::parse_premium_blob_tier(const utility::string_t& value)
+    {
+        if (value == header_value_access_tier_p4)
+        {
+            return premium_blob_tier::p4;
+        }
+        else if (value == header_value_access_tier_p6)
+        {
+            return premium_blob_tier::p6;
+        }
+        else if (value == header_value_access_tier_p10)
+        {
+            return premium_blob_tier::p10;
+        }
+        else if (value == header_value_access_tier_p20)
+        {
+            return premium_blob_tier::p20;
+        }
+        else if (value == header_value_access_tier_p30)
+        {
+            return premium_blob_tier::p30;
+        }
+        else if (value == header_value_access_tier_p40)
+        {
+            return premium_blob_tier::p40;
+        }
+        else if (value == header_value_access_tier_p50)
+        {
+            return premium_blob_tier::p50;
+        }
+        else if (value == header_value_access_tier_p60)
+        {
+            return premium_blob_tier::p60;
+        }
+        else
+        {
+            return premium_blob_tier::unknown;
+        }
+    }
+
+    standard_blob_tier response_parsers::parse_standard_blob_tier(const utility::string_t& value)
+    {
+        if (value == header_value_access_tier_hot)
+        {
+            return standard_blob_tier::hot;
+        }
+        else if (value == header_value_access_tier_cool)
+        {
+            return standard_blob_tier::cool;
+        }
+        else if (value == header_value_access_tier_archive)
+        {
+            return standard_blob_tier::archive;
+        }
+        else
+        {
+            return standard_blob_tier::unknown;
         }
     }
 

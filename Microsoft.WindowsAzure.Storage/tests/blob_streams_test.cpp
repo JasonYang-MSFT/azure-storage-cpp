@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "blob_test_base.h"
 #include "check_macros.h"
+#include "wascore/hashing.h"
 
 size_t seek_read_and_compare(concurrency::streams::istream stream, std::vector<uint8_t> buffer_to_compare, utility::size64_t offset, size_t count, size_t expected_read_count)
 {
@@ -178,6 +179,54 @@ void seek_and_write_putn(concurrency::streams::ostream stream, const std::vector
 
 SUITE(Blob)
 {
+	TEST_FIXTURE(block_blob_test_base, blob_write_stream_upload_and_download)
+	{
+        auto provider1 = azure::storage::core::hash_provider::create_md5_hash_provider();
+        auto provider2 = azure::storage::core::hash_provider::create_crc64_hash_provider();
+
+        std::vector<uint8_t> buffer;
+        size_t buffersize = 3 * 1024 * 1024;
+        buffer.resize(buffersize);
+
+        auto wstream = m_blob.open_write();
+
+        // write 3 * 3MB to the blob stream
+        for (int i = 0; i < 3; ++i)
+        {
+            fill_buffer(buffer);
+            provider1.write(buffer.data(), buffersize);
+            provider2.write(buffer.data(), buffersize);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> input_buffer(buffer);
+            wstream.write(input_buffer, buffersize);
+        }
+
+        provider1.close();
+        provider2.close();
+        CHECK(provider1.hash().is_md5());
+        auto origin_md5 = provider1.hash().md5();
+        CHECK(provider2.hash().is_crc64());
+        auto origin_crc64 = provider2.hash().crc64();
+
+        wstream.flush().wait();
+        wstream.close().wait();
+
+        azure::storage::blob_request_options options;
+        concurrency::streams::container_buffer<std::vector<uint8_t>> output_buffer;
+        m_blob.download_to_stream(output_buffer.create_ostream(), azure::storage::access_condition(), options, m_context);
+
+        provider1 = azure::storage::core::hash_provider::create_md5_hash_provider();
+        provider1.write(output_buffer.collection().data(), (size_t)(output_buffer.size()));
+        provider1.close();
+        provider2 = azure::storage::core::hash_provider::create_crc64_hash_provider();
+        provider2.write(output_buffer.collection().data(), (size_t)(output_buffer.size()));
+        provider2.close();
+
+        auto downloaded_md5 = provider1.hash().md5();
+        CHECK_UTF8_EQUAL(origin_md5, downloaded_md5);
+        auto downloaded_crc64 = provider2.hash().crc64();
+        CHECK_UTF8_EQUAL(origin_crc64, downloaded_crc64);
+    }
+
     TEST_FIXTURE(block_blob_test_base, blob_read_stream_download)
     {
         azure::storage::blob_request_options options;
@@ -186,7 +235,7 @@ SUITE(Blob)
 
         std::vector<uint8_t> buffer;
         buffer.resize(3 * 1024 * 1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
 
         concurrency::streams::container_buffer<std::vector<uint8_t>> output_buffer;
@@ -206,7 +255,7 @@ SUITE(Blob)
 
         std::vector<uint8_t> buffer;
         buffer.resize(2 * 1024 * 1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
 
         auto stream = m_blob.open_read(azure::storage::access_condition(), options, m_context);
@@ -228,7 +277,7 @@ SUITE(Blob)
 
         std::vector<uint8_t> buffer;
         buffer.resize(3 * 1024 * 1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
 
         auto stream = m_blob.open_read(azure::storage::access_condition(), options, m_context);
@@ -296,7 +345,7 @@ SUITE(Blob)
         const size_t buffer_size = 16 * 1024;
         std::vector<uint8_t> input_buffer;
         input_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(input_buffer);
+        fill_buffer(input_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(input_buffer), azure::storage::access_condition(), options, m_context);
 
         auto blob_stream = m_blob.open_read(azure::storage::access_condition(), options, m_context);
@@ -311,7 +360,7 @@ SUITE(Blob)
         const size_t buffer_size = 64 * 1024;
         std::vector<uint8_t> input_buffer;
         input_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(input_buffer);
+        fill_buffer(input_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(input_buffer), azure::storage::access_condition(), options, m_context);
 
         auto blob_stream = m_blob.open_read(azure::storage::access_condition(), options, m_context);
@@ -353,7 +402,7 @@ SUITE(Blob)
         size_t attempts = 2;
 
         buffer.resize(1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         stream.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
 
         std::copy(buffer.begin(), buffer.end(), final_blob_contents.begin());
@@ -361,12 +410,12 @@ SUITE(Blob)
         stream.seek(5 * 1024);
         attempts++;
 
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         stream.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
 
         std::copy(buffer.begin(), buffer.end(), final_blob_contents.begin() + 5 * 1024);
 
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         stream.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
 
         std::copy(buffer.begin(), buffer.end(), final_blob_contents.begin() + 6 * 1024);
@@ -374,7 +423,7 @@ SUITE(Blob)
         stream.seek(512);
         attempts++;
 
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         stream.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
 
         std::copy(buffer.begin(), buffer.end(), final_blob_contents.begin() + 512);
@@ -399,7 +448,7 @@ SUITE(Blob)
 
         std::vector<uint8_t> buffer;
         buffer.resize(16 * 1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), 0, azure::storage::access_condition(), options, m_context);
 
         CHECK_THROW(m_blob.open_write(azure::storage::access_condition(), options, m_context), std::logic_error);
@@ -433,7 +482,7 @@ SUITE(Blob)
         missing_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(m_blob.properties().etag()), azure::storage::blob_request_options(), m_context).close().wait();
 
         missing_blob = m_container.get_block_blob_reference(_XPLATSTR("missing_blob3"));
-        missing_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(_XPLATSTR("*")), azure::storage::blob_request_options(), m_context).close().wait();
+        CHECK_THROW(missing_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(_XPLATSTR("*")), azure::storage::blob_request_options(), m_context).close().wait(), azure::storage::storage_exception);
 
         missing_blob = m_container.get_block_blob_reference(_XPLATSTR("missing_blob4"));
         missing_blob.open_write(azure::storage::access_condition::generate_if_modified_since_condition(m_blob.properties().last_modified() + utility::datetime::from_minutes(1)), azure::storage::blob_request_options(), m_context).close().wait();
@@ -448,10 +497,7 @@ SUITE(Blob)
         m_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(missing_blob.properties().etag()), azure::storage::blob_request_options(), m_context).close().wait();
 
         CHECK_THROW(m_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(m_blob.properties().etag()), azure::storage::blob_request_options(), m_context), azure::storage::storage_exception);
-
-        auto stream = m_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(_XPLATSTR("*")), azure::storage::blob_request_options(), m_context);
-        CHECK_THROW(stream.close().wait(), azure::storage::storage_exception);
-
+        
         m_blob.open_write(azure::storage::access_condition::generate_if_modified_since_condition(m_blob.properties().last_modified() - utility::datetime::from_minutes(1)), azure::storage::blob_request_options(), m_context).close().wait();
 
         CHECK_THROW(m_blob.open_write(azure::storage::access_condition::generate_if_modified_since_condition(m_blob.properties().last_modified() + utility::datetime::from_minutes(1)), azure::storage::blob_request_options(), m_context), azure::storage::storage_exception);
@@ -460,15 +506,10 @@ SUITE(Blob)
 
         CHECK_THROW(m_blob.open_write(azure::storage::access_condition::generate_if_not_modified_since_condition(m_blob.properties().last_modified() - utility::datetime::from_minutes(1)), azure::storage::blob_request_options(), m_context), azure::storage::storage_exception);
 
-        stream = m_blob.open_write(azure::storage::access_condition::generate_if_match_condition(m_blob.properties().etag()), azure::storage::blob_request_options(), m_context);
+        auto stream = m_blob.open_write(azure::storage::access_condition::generate_if_match_condition(m_blob.properties().etag()), azure::storage::blob_request_options(), m_context);
         m_blob.upload_properties(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
         CHECK_THROW(stream.close().wait(), azure::storage::storage_exception);
-
-        missing_blob = m_container.get_block_blob_reference(_XPLATSTR("missing_blob6"));
-        stream = missing_blob.open_write(azure::storage::access_condition::generate_if_none_match_condition(_XPLATSTR("*")), azure::storage::blob_request_options(), m_context);
-        missing_blob.upload_block_list(std::vector<azure::storage::block_list_item>(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
-        CHECK_THROW(stream.close().wait(), azure::storage::storage_exception);
-
+        
         stream = m_blob.open_write(azure::storage::access_condition::generate_if_not_modified_since_condition(m_blob.properties().last_modified()), azure::storage::blob_request_options(), m_context);
         std::this_thread::sleep_for(std::chrono::seconds(1));
         m_blob.upload_properties(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
@@ -482,7 +523,7 @@ SUITE(Blob)
         const size_t buffer_size = 16 * 1024;
         std::vector<uint8_t> input_buffer;
         input_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(input_buffer);
+        fill_buffer(input_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(input_buffer), 0, azure::storage::access_condition(), options, m_context);
         CHECK_EQUAL(buffer_size, m_blob.properties().size());
 
@@ -498,7 +539,7 @@ SUITE(Blob)
         const size_t buffer_size = 64 * 1024;
         std::vector<uint8_t> input_buffer;
         input_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(input_buffer);
+        fill_buffer(input_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(input_buffer), 0, azure::storage::access_condition(), options, m_context);
         CHECK_EQUAL(buffer_size, m_blob.properties().size());
 
@@ -514,7 +555,7 @@ SUITE(Blob)
         const size_t buffer_size = 16 * 1024;
         std::vector<uint8_t> original_buffer;
         original_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(original_buffer);
+        fill_buffer(original_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(original_buffer), 0, azure::storage::access_condition(), options, m_context);
         CHECK_EQUAL(buffer_size, m_blob.properties().size());
 
@@ -530,7 +571,7 @@ SUITE(Blob)
         const size_t buffer_size = 64 * 1024;
         std::vector<uint8_t> original_buffer;
         original_buffer.resize(buffer_size);
-        fill_buffer_and_get_md5(original_buffer);
+        fill_buffer(original_buffer);
         m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(original_buffer), 0, azure::storage::access_condition(), options, m_context);
         CHECK_EQUAL(buffer_size, m_blob.properties().size());
 

@@ -20,6 +20,8 @@
 #include "wascore/protocol_json.h"
 #include "was/common.h"
 
+#include "cpprest/asyncrt_utils.h"
+
 namespace azure { namespace storage { namespace protocol {
 
     utility::string_t table_response_parsers::parse_etag(const web::http::http_response& response)
@@ -66,12 +68,14 @@ namespace azure { namespace storage { namespace protocol {
         return token;
     }
 
-    std::vector<table_result> table_response_parsers::parse_batch_results(const web::http::http_response& response, Concurrency::streams::stringstreambuf& response_buffer, bool is_query, size_t batch_size)
+    std::vector<table_result> table_response_parsers::parse_batch_results(const web::http::http_response& response, const concurrency::streams::container_buffer<std::vector<uint8_t>>& response_buffer, bool is_query, size_t batch_size)
     {
         std::vector<table_result> batch_result;
         batch_result.reserve(batch_size);
 
-        std::string& response_body = response_buffer.collection();
+        // TODO: We make a copy of the response here, we may optimize it in the future
+        const std::vector<uint8_t>& response_collection = response_buffer.collection();
+        const std::string response_body(response_collection.begin(), response_collection.end());
 
         // TODO: Make this Casablanca code more robust
 
@@ -89,7 +93,7 @@ namespace azure { namespace storage { namespace protocol {
             std::string status_code_string = response_body.substr(status_code_begin, status_code_end - status_code_begin);
 
             // Extract the status code as an integer
-            int status_code = utility::conversions::scan_string<int>(utility::conversions::to_string_t(status_code_string));
+            int status_code = utility::conversions::details::scan_string<int>(utility::conversions::to_string_t(status_code_string));
 
             // Acceptable codes are 'Created' and 'NoContent'
             if (status_code == web::http::status_codes::OK || status_code == web::http::status_codes::Created || status_code == web::http::status_codes::Accepted || status_code == web::http::status_codes::NoContent || status_code == web::http::status_codes::PartialContent || status_code == web::http::status_codes::NotFound)
@@ -177,7 +181,7 @@ namespace azure { namespace storage { namespace protocol {
                 std::string status_code_string = response_body.substr(status_code_begin, status_code_end - status_code_begin);
 
                 // Extract the status code as an integer
-                int status_code = utility::conversions::scan_string<int>(utility::conversions::to_string_t(status_code_string));
+                int status_code = utility::conversions::details::scan_string<int>(utility::conversions::to_string_t(status_code_string));
 
                 // Acceptable codes are 'Created' and 'NoContent'
                 if (status_code == web::http::status_codes::OK || status_code == web::http::status_codes::Created || status_code == web::http::status_codes::Accepted || status_code == web::http::status_codes::NoContent || status_code == web::http::status_codes::PartialContent)
@@ -226,6 +230,12 @@ namespace azure { namespace storage { namespace protocol {
             }
         }
 
+        if (batch_result.size() != batch_size) {
+            std::string str;
+            str.reserve(128);
+            str.append(protocol::error_batch_size_not_match_response).append(" Sent ").append(std::to_string(batch_size)).append(" batch operations and received ").append(std::to_string(batch_result.size())).append(" batch results.");
+            throw storage_exception(str, false);
+        }
         return batch_result;
     }
 

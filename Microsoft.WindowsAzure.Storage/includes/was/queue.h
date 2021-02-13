@@ -290,7 +290,7 @@ namespace azure { namespace storage {
         /// Returns the next time that the message will be visible.
         /// </summary>
         /// <returns>The next time that the message will be visible.</returns>
-        utility::datetime next_visibile_time() const
+        utility::datetime next_visible_time() const
         {
             return m_next_visible_time;
         }
@@ -343,6 +343,8 @@ namespace azure { namespace storage {
         utility::datetime m_expiration_time;
         utility::datetime m_next_visible_time;
         int m_dequeue_count;
+
+        void update_message_info(const cloud_queue_message& message_info);
 
         friend class cloud_queue;
     };
@@ -725,7 +727,8 @@ namespace azure { namespace storage {
         void initialize()
         {
             set_authentication_scheme(azure::storage::authentication_scheme::shared_key);
-            m_default_request_options.set_retry_policy(exponential_retry_policy());
+            if (!m_default_request_options.retry_policy().is_valid())
+                m_default_request_options.set_retry_policy(exponential_retry_policy());
         }
 
         queue_request_options get_modified_options(const queue_request_options& options) const;

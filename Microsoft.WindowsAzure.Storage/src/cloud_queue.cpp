@@ -88,14 +88,9 @@ namespace azure { namespace storage {
 
     pplx::task<void> cloud_queue::add_message_async(cloud_queue_message& message, std::chrono::seconds time_to_live, std::chrono::seconds initial_visibility_timeout, queue_request_options& options, operation_context context)
     {
-        if (time_to_live.count() <= 0LL)
+        if ((time_to_live.count() <= 0LL) && (time_to_live.count() != -1LL))
         {
-            throw std::invalid_argument(protocol::error_non_positive_time_to_live);
-        }
-
-        if (time_to_live.count() > 604800LL)
-        {
-            throw std::invalid_argument(protocol::error_large_time_to_live);
+            throw std::invalid_argument(protocol::error_invalid_value_time_to_live);
         }
 
         if (initial_visibility_timeout.count() < 0LL)
@@ -114,6 +109,21 @@ namespace azure { namespace storage {
         command->set_build_request(std::bind(protocol::add_message, message, time_to_live, initial_visibility_timeout, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response(std::bind(protocol::preprocess_response_void, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_postprocess_response([&message](const web::http::http_response& response, const request_result&, const core::ostream_descriptor&, operation_context context) -> pplx::task<void>
+        {
+            UNREFERENCED_PARAMETER(context);
+            protocol::message_reader reader(response.body());
+            std::vector<protocol::cloud_message_list_item> queue_items = reader.move_items();
+            
+            if (!queue_items.empty())
+            {
+                protocol::cloud_message_list_item& item = queue_items.front();
+                cloud_queue_message message_info(item.move_content(), item.move_id(), item.move_pop_receipt(), item.insertion_time(), item.expiration_time(), item.next_visible_time(), item.dequeue_count());
+                message.update_message_info(message_info);
+            }
+            
+            return pplx::task_from_result();
+        });
         return core::executor<void>::execute_async(command, modified_options, context);
     }
 

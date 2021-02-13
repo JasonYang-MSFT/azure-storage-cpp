@@ -31,11 +31,6 @@ namespace azure { namespace storage {
         m_last_modified = other.last_modified();
     }
 
-    void cloud_file_directory_properties::update_etag(const cloud_file_directory_properties& other)
-    {
-        m_etag = other.etag();
-    }
-
     cloud_file_directory::cloud_file_directory(storage_uri uri)
         : m_uri(std::move(uri)), m_metadata(std::make_shared<cloud_metadata>()), m_properties(std::make_shared<cloud_file_directory_properties>())
     {
@@ -86,24 +81,24 @@ namespace azure { namespace storage {
         m_share = cloud_file_share(std::move(share_name), cloud_file_client(core::get_service_client_uri(m_uri), std::move(credentials)));
     }
 
-    list_file_and_diretory_result_iterator cloud_file_directory::list_files_and_directories(int64_t max_results, const file_request_options& options, operation_context context) const
+    list_file_and_diretory_result_iterator cloud_file_directory::list_files_and_directories(const utility::string_t& prefix, int64_t max_results, const file_request_options& options, operation_context context) const
     {
         auto instance = std::make_shared<cloud_file_directory>(*this);
         return list_file_and_diretory_result_iterator(
-            [instance, options, context](const continuation_token& token, size_t max_results_per_segment)
+            [instance, prefix, options, context](const continuation_token& token, size_t max_results_per_segment)
         {
-            return instance->list_files_and_directories_segmented(max_results_per_segment, token, options, context);
+            return instance->list_files_and_directories_segmented(prefix, max_results_per_segment, token, options, context);
         },
             max_results, 0);
     }
 
-    pplx::task<list_file_and_directory_result_segment> cloud_file_directory::list_files_and_directories_segmented_async(int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const
+    pplx::task<list_file_and_directory_result_segment> cloud_file_directory::list_files_and_directories_segmented_async(const utility::string_t& prefix, int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const
     {
         file_request_options modified_options(options);
         modified_options.apply_defaults(service_client().default_request_options());
 
         auto command = std::make_shared<core::storage_command<list_file_and_directory_result_segment>>(uri());
-        command->set_build_request(std::bind(protocol::list_files_and_directories, max_results, token, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(std::bind(protocol::list_files_and_directories, prefix, max_results, token, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_location_mode(core::command_location_mode::primary_or_secondary, token.target_location());
         command->set_preprocess_response(std::bind(protocol::preprocess_response<list_file_and_directory_result_segment>, list_file_and_directory_result_segment(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -134,7 +129,7 @@ namespace azure { namespace storage {
         auto properties = m_properties;
 
         auto command = std::make_shared<core::storage_command<void>>(uri());
-        command->set_build_request(std::bind(protocol::create_file_directory, metadata(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_build_request(std::bind(protocol::create_file_directory, metadata(), this->properties(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         command->set_authentication_handler(service_client().authentication_handler());
         command->set_preprocess_response([properties](const web::http::http_response& response, const request_result& result, operation_context context)
         {
@@ -234,6 +229,26 @@ namespace azure { namespace storage {
         return core::executor<void>::execute_async(command, modified_options, context);
     }
 
+    pplx::task<void> cloud_file_directory::upload_properties_async(const file_access_condition& access_condition, const file_request_options& options, operation_context context) const
+    {
+        UNREFERENCED_PARAMETER(access_condition);
+        file_request_options modified_options(options);
+        modified_options.apply_defaults(service_client().default_request_options());
+
+        auto properties = m_properties;
+
+        auto command = std::make_shared<core::storage_command<void>>(uri());
+        command->set_build_request(std::bind(protocol::set_file_directory_properties, this->properties(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        command->set_authentication_handler(service_client().authentication_handler());
+        command->set_preprocess_response([properties](const web::http::http_response& response, const request_result& result, operation_context context)
+        {
+            protocol::preprocess_response_void(response, result, context);
+            *properties = protocol::file_response_parsers::parse_file_directory_properties(response);
+        });
+
+        return core::executor<void>::execute_async(command, modified_options, context);
+    }
+
     pplx::task<void> cloud_file_directory::upload_metadata_async(const file_access_condition& access_condition, const file_request_options& options, operation_context context) const
     {
         UNREFERENCED_PARAMETER(access_condition);
@@ -248,7 +263,7 @@ namespace azure { namespace storage {
         command->set_preprocess_response([properties](const web::http::http_response& response, const request_result& result, operation_context context)
         {
             protocol::preprocess_response_void(response, result, context);
-            properties->update_etag(protocol::file_response_parsers::parse_file_directory_properties(response));
+            properties->update_etag_and_last_modified(protocol::file_response_parsers::parse_file_directory_properties(response));
         });
         return core::executor<void>::execute_async(command, modified_options, context);
     }

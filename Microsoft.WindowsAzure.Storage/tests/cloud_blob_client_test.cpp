@@ -19,17 +19,19 @@
 #include "blob_test_base.h"
 #include "check_macros.h"
 
+#include "wascore/util.h"
+
 #pragma region Fixture
 
-void blob_service_test_base_with_objects_to_delete::create_containers(const utility::string_t& prefix, std::size_t num)
+void blob_service_test_base_with_objects_to_delete::create_containers(const utility::string_t& prefix, std::size_t num, azure::storage::blob_container_public_access_type public_access_type)
 {
     for (std::size_t i = 0; i < num; ++i)
     {
-        auto index = utility::conversions::print_string(i);
+        auto index = azure::storage::core::convert_to_string(i);
         auto container = m_client.get_container_reference(prefix + index);
         m_containers_to_delete.push_back(container);
         container.metadata()[_XPLATSTR("index")] = index;
-        container.create(azure::storage::blob_container_public_access_type::off, azure::storage::blob_request_options(), m_context);
+        container.create(public_access_type, azure::storage::blob_request_options(), m_context);
     }
 }
 
@@ -37,7 +39,7 @@ void blob_service_test_base_with_objects_to_delete::create_blobs(const azure::st
 {
     for (std::size_t i = 0; i < num; i++)
     {
-        auto index = utility::conversions::print_string(i);
+        auto index = azure::storage::core::convert_to_string(i);
         auto blob = container.get_block_blob_reference(prefix + index);
         m_blobs_to_delete.push_back(blob);
         blob.upload_text(_XPLATSTR("test"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
@@ -64,6 +66,7 @@ void blob_service_test_base_with_objects_to_delete::check_container_list(const s
                 auto index_str = list_iter->metadata().find(_XPLATSTR("index"));
                 CHECK(index_str != list_iter->metadata().end());
                 CHECK_UTF8_EQUAL(iter->name(), prefix + index_str->second);
+                CHECK(list_iter->properties().public_access() == iter->properties().public_access());
                 containers.erase(iter);
                 found = true;
                 break;
@@ -146,14 +149,43 @@ SUITE(Blob)
         CHECK(container.properties().lease_status() == azure::storage::lease_status::unspecified);
         CHECK(container.properties().lease_state() == azure::storage::lease_state::unspecified);
         CHECK(container.properties().lease_duration() == azure::storage::lease_duration::unspecified);
+        CHECK(container.properties().public_access() == azure::storage::blob_container_public_access_type::off);
         CHECK(container.is_valid());
+    }
+
+    TEST_FIXTURE(blob_service_test_base, download_account_properties_service)
+    {
+        auto properties = m_client.download_account_properties();
+        CHECK((properties.sku_name() == _XPLATSTR("Standard_RAGRS")) || (properties.sku_name() == _XPLATSTR("Standard_LRS")));
+        CHECK((properties.account_kind() == _XPLATSTR("Storage")) || (properties.account_kind() == _XPLATSTR("StorageV2")));
+
+        properties = m_premium_client.download_account_properties();
+        CHECK((properties.sku_name() == _XPLATSTR("Premium_RAGRS")) || (properties.sku_name() == _XPLATSTR("Premium_LRS")));
+        CHECK((properties.account_kind() == _XPLATSTR("Storage")) || (properties.account_kind() == _XPLATSTR("StorageV2")));
+
+        properties = m_blob_storage_client.download_account_properties();
+        CHECK((properties.sku_name() == _XPLATSTR("Standard_RAGRS")) || (properties.sku_name() == _XPLATSTR("Standard_LRS")));
+        CHECK(properties.account_kind() == _XPLATSTR("BlobStorage"));
+
+        azure::storage::account_shared_access_policy access_policy;
+        access_policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
+        access_policy.set_permissions(azure::storage::account_shared_access_policy::read);
+        access_policy.set_service_type(azure::storage::account_shared_access_policy::service_types::blob);
+        access_policy.set_resource_type(azure::storage::account_shared_access_policy::resource_types::service);
+
+        azure::storage::storage_credentials account_sas_credentials(test_config::instance().account().get_shared_access_signature(access_policy));
+        azure::storage::cloud_blob_client sas_client(test_config::instance().account().blob_endpoint(), account_sas_credentials);
+        
+        properties = sas_client.download_account_properties();
+        CHECK((properties.sku_name() == _XPLATSTR("Standard_RAGRS")) || (properties.sku_name() == _XPLATSTR("Standard_LRS")));
+        CHECK((properties.account_kind() == _XPLATSTR("Storage")) || (properties.account_kind() == _XPLATSTR("StorageV2")));
     }
 
     TEST_FIXTURE(blob_service_test_base_with_objects_to_delete, list_containers_with_prefix)
     {
         auto prefix = get_random_container_name();
-
-        create_containers(prefix, 1);
+        
+        create_containers(prefix, 1, get_random_enum(azure::storage::blob_container_public_access_type::blob));
 
         auto listing = list_all_containers(prefix, azure::storage::container_listing_details::all, 1, azure::storage::blob_request_options());
         
@@ -164,17 +196,17 @@ SUITE(Blob)
     {
         auto prefix = get_random_container_name();
 
-        create_containers(prefix, 1);
+        create_containers(prefix, 1, get_random_enum(azure::storage::blob_container_public_access_type::blob));
 
         auto listing = list_all_containers(utility::string_t(), azure::storage::container_listing_details::all, 5001, azure::storage::blob_request_options());
-        
+
         check_container_list(listing, prefix, false);
     }
 
     TEST_FIXTURE(blob_service_test_base_with_objects_to_delete, list_containers_with_continuation_token)
     {
         auto prefix = get_random_container_name();
-        create_containers(prefix, 10);
+        create_containers(prefix, 10, get_random_enum(azure::storage::blob_container_public_access_type::blob));
 
         std::vector<azure::storage::cloud_blob_container> listing;
         azure::storage::continuation_token token;
@@ -214,7 +246,7 @@ SUITE(Blob)
 
         for (int i = 0; i < 3; i++)
         {
-            auto index = utility::conversions::print_string(i);
+            auto index = azure::storage::core::convert_to_string(i);
             auto blob = m_container.get_block_blob_reference(prefix + index);
             blob.upload_text(_XPLATSTR("test"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
             blobs.push_back(blob);
@@ -222,7 +254,7 @@ SUITE(Blob)
 
         for (int i = 0; i < 2; i++)
         {
-            auto index = utility::conversions::print_string(i);
+            auto index = azure::storage::core::convert_to_string(i);
             auto blob = m_container.get_block_blob_reference(prefix2 + index);
             blob.upload_text(_XPLATSTR("test2"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
             blobs2.push_back(blob);
@@ -274,5 +306,67 @@ SUITE(Blob)
         auto client = test_config::instance().account().create_cloud_blob_client();
         client.set_authentication_scheme(azure::storage::authentication_scheme::shared_key_lite);
         client.list_containers_segmented(utility::string_t(), azure::storage::container_listing_details::none, 1, azure::storage::continuation_token(), azure::storage::blob_request_options(), m_context);
+    }
+
+    TEST_FIXTURE(blob_test_base, list_containers_cancellation_timeout)
+    {
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            // cancel the cancellation prior to the operation
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_client.list_containers_segmented_async(_XPLATSTR(""), azure::storage::container_listing_details::none, 100000, azure::storage::continuation_token(), azure::storage::blob_request_options(), azure::storage::operation_context(), cancel_token_src.get_token());
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(1));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_client.list_containers_segmented_async(_XPLATSTR(""), azure::storage::container_listing_details::none, 100000, azure::storage::continuation_token(), options, azure::storage::operation_context());
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_client.list_containers_segmented_async(_XPLATSTR(""), azure::storage::container_listing_details::none, 100000, azure::storage::continuation_token(), azure::storage::blob_request_options(), azure::storage::operation_context(), cancel_token_src.get_token());
+                task_result.get();
+                // cancel the cancellation after the operation
+                cancel_token_src.cancel();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
     }
 }

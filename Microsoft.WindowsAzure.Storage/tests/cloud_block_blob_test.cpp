@@ -20,7 +20,10 @@
 #include "check_macros.h"
 
 #include "cpprest/producerconsumerstream.h"
+#include "cpprest/rawptrstream.h"
+#include "was/crc64.h"
 #include "wascore/constants.h"
+#include "wascore/util.h"
 
 #pragma region Fixture
 
@@ -68,6 +71,68 @@ void block_blob_test_base::check_block_list_equal(const std::vector<azure::stora
     }
 }
 
+static std::string INTENDED_ERR_MSG = "Intended exception from currupted_ostreambuf.";
+static std::string ARCHIVE_BLOB_IN_STANDARD_ACCOUNT_ERR_MSG = "Blob access tier is supported only for Blob Storage accounts.";
+static std::string REHYDRATE_CANNOT_SET_TO_ARCHIVE_ERR_MSG = "This operation is not permitted because the blob is being rehydrated.";
+static std::string ACTIVE_LEASE_ERROR_MESSAGE = "There is currently a lease on the blob and no lease ID was specified in the request.";
+
+template<typename _CharType>
+class currupted_ostreambuf : public Concurrency::streams::details::basic_rawptr_buffer<_CharType>
+{
+public:
+    currupted_ostreambuf(bool keep_writable, int recover_on_nretries)
+        : Concurrency::streams::details::basic_rawptr_buffer<_CharType>(), m_keepwritable(keep_writable), m_recover_on_nretries(recover_on_nretries)
+    { }
+
+    pplx::task<size_t> _putn(const _CharType* ptr, size_t count) override
+    {
+        UNREFERENCED_PARAMETER(ptr);
+        try
+        {
+            ++m_call_count;
+            if (m_call_count < m_recover_on_nretries + 1)
+            {
+                throw azure::storage::storage_exception(INTENDED_ERR_MSG);
+            }
+            return pplx::task_from_result(count);
+        }
+        catch (...)
+        {
+            return pplx::task_from_exception<size_t>(std::current_exception());
+        }
+    }
+
+    bool can_write() const override
+    {
+        return m_keepwritable
+            ? true
+            : Concurrency::streams::details::basic_rawptr_buffer<_CharType>::can_write();
+    }
+
+    int call_count() const
+    {
+        return m_call_count;
+    }
+
+private:
+    int m_call_count = 0;
+    int m_recover_on_nretries = 0;
+    bool m_keepwritable = false;
+};
+
+template <typename _CharType>
+class currupted_stream
+{
+public:
+    typedef _CharType char_type;
+    typedef currupted_ostreambuf<_CharType> buffer_type;
+
+    static concurrency::streams::basic_ostream<char_type> open_ostream(bool keep_writable, int recover_on_nretries)
+    {
+        return concurrency::streams::basic_ostream<char_type>(concurrency::streams::streambuf<char_type>(std::make_shared<buffer_type>(keep_writable, recover_on_nretries)));
+    }
+};
+
 #pragma endregion
 
 SUITE(Blob)
@@ -81,20 +146,28 @@ SUITE(Blob)
         std::vector<azure::storage::block_list_item> committed_blocks;
 
         utility::string_t md5_header;
-        m_context.set_sending_request([&md5_header] (web::http::http_request& request, azure::storage::operation_context)
+        utility::string_t crc64_header;
+        m_context.set_sending_request([&md5_header, &crc64_header] (web::http::http_request& request, azure::storage::operation_context)
         {
             if (!request.headers().match(web::http::header_names::content_md5, md5_header))
             {
                 md5_header.clear();
             }
+            if (!request.headers().match(azure::storage::protocol::ms_header_content_crc64, crc64_header))
+            {
+                crc64_header.clear();
+            }
         });
 
+        uint16_t block_id_counter = 0;
+
         options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(false);
         for (uint16_t i = 0; i < 3; ++i)
         {
-            fill_buffer_and_get_md5(buffer);
+            fill_buffer(buffer);
             auto stream = concurrency::streams::bytestream::open_istream(buffer);
-            auto block_id = get_block_id(i);
+            auto block_id = get_block_id(block_id_counter++);
             uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
             m_blob.upload_block(block_id, stream, utility::string_t(), azure::storage::access_condition(), options, m_context);
             CHECK_UTF8_EQUAL(utility::string_t(), md5_header);
@@ -106,13 +179,49 @@ SUITE(Blob)
         uncommitted_blocks.clear();
 
         options.set_use_transactional_md5(false);
-        for (uint16_t i = 3; i < 6; ++i)
+        options.set_use_transactional_crc64(false);
+        for (uint16_t i = 0; i < 3; ++i)
         {
             auto md5 = fill_buffer_and_get_md5(buffer);
             auto stream = concurrency::streams::bytestream::open_istream(buffer);
-            auto block_id = get_block_id(i);
+            auto block_id = get_block_id(block_id_counter++);
             uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
             m_blob.upload_block(block_id, stream, md5, azure::storage::access_condition(), options, m_context);
+            CHECK_UTF8_EQUAL(md5, md5_header);
+        }
+
+        check_block_list_equal(committed_blocks, uncommitted_blocks);
+        std::copy(uncommitted_blocks.begin(), uncommitted_blocks.end(), std::back_inserter(committed_blocks));
+        m_blob.upload_block_list(committed_blocks, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
+        uncommitted_blocks.clear();
+
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(false);
+        for (uint16_t i = 0; i < 3; ++i)
+        {
+            auto crc64 = fill_buffer_and_get_crc64(buffer);
+            uint64_t crc64_val = azure::storage::crc64(buffer.data(), buffer.size());
+            auto stream = concurrency::streams::bytestream::open_istream(buffer);
+            auto block_id = get_block_id(block_id_counter++);
+            uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
+            m_blob.upload_block(block_id, stream, crc64_val, azure::storage::access_condition(), options, m_context);
+            CHECK_UTF8_EQUAL(crc64, crc64_header);
+        }
+
+        check_block_list_equal(committed_blocks, uncommitted_blocks);
+        std::copy(uncommitted_blocks.begin(), uncommitted_blocks.end(), std::back_inserter(committed_blocks));
+        m_blob.upload_block_list(committed_blocks, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
+        uncommitted_blocks.clear();
+
+        options.set_use_transactional_md5(true);
+        options.set_use_transactional_crc64(false);
+        for (uint16_t i = 0; i < 3; ++i)
+        {
+            auto md5 = fill_buffer_and_get_md5(buffer);
+            auto stream = concurrency::streams::bytestream::open_istream(buffer);
+            auto block_id = get_block_id(block_id_counter++);
+            uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
+            m_blob.upload_block(block_id, stream, utility::string_t(), azure::storage::access_condition(), options, m_context);
             CHECK_UTF8_EQUAL(md5, md5_header);
         }
 
@@ -122,27 +231,32 @@ SUITE(Blob)
         uncommitted_blocks.clear();
 
         options.set_use_transactional_md5(true);
-        for (uint16_t i = 6; i < 9; ++i)
+        options.set_use_transactional_crc64(false);
+        for (uint16_t i = 0; i < 3; ++i)
         {
             auto md5 = fill_buffer_and_get_md5(buffer);
             auto stream = concurrency::streams::bytestream::open_istream(buffer);
-            auto block_id = get_block_id(i);
+            auto block_id = get_block_id(block_id_counter++);
             uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
-            m_blob.upload_block(block_id, stream, utility::string_t(), azure::storage::access_condition(), options, m_context);
+            m_blob.upload_block(block_id, stream, azure::storage::checksum_none, azure::storage::access_condition(), options, m_context);
             CHECK_UTF8_EQUAL(md5, md5_header);
         }
 
+        check_block_list_equal(committed_blocks, uncommitted_blocks);
+        std::copy(uncommitted_blocks.begin(), uncommitted_blocks.end(), std::back_inserter(committed_blocks));
+        m_blob.upload_block_list(committed_blocks, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
+        uncommitted_blocks.clear();
+
         options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(true);
+        for (uint16_t i = 0; i < 3; ++i)
         {
-            // upload a block of max_block_size
-            std::vector<uint8_t> big_buffer;
-            big_buffer.resize(azure::storage::protocol::max_block_size);
-            auto md5 = fill_buffer_and_get_md5(big_buffer);
-            auto stream = concurrency::streams::bytestream::open_istream(big_buffer);
-            auto block_id = get_block_id(9);
+            auto crc64 = fill_buffer_and_get_crc64(buffer);
+            auto stream = concurrency::streams::bytestream::open_istream(buffer);
+            auto block_id = get_block_id(block_id_counter++);
             uncommitted_blocks.push_back(azure::storage::block_list_item(block_id));
-            m_blob.upload_block(block_id, stream, md5, azure::storage::access_condition(), options, m_context);
-            CHECK_UTF8_EQUAL(md5, md5_header);
+            m_blob.upload_block(block_id, stream, azure::storage::checksum_none, azure::storage::access_condition(), options, m_context);
+            CHECK_UTF8_EQUAL(crc64, crc64_header);
         }
 
         check_block_list_equal(committed_blocks, uncommitted_blocks);
@@ -152,35 +266,19 @@ SUITE(Blob)
 
         {
             options.set_use_transactional_md5(true);
-            fill_buffer_and_get_md5(buffer);
+            options.set_use_transactional_crc64(false);
+            fill_buffer(buffer);
             auto stream = concurrency::streams::bytestream::open_istream(buffer);
             CHECK_THROW(m_blob.upload_block(get_block_id(0), stream, dummy_md5, azure::storage::access_condition(), options, m_context), azure::storage::storage_exception);
             CHECK_UTF8_EQUAL(dummy_md5, md5_header);
         }
-
-        options.set_use_transactional_md5(false);
-
-        // trying upload blocks bigger than max_block_size
         {
-            buffer.resize(azure::storage::protocol::max_block_size + 1);
-            fill_buffer_and_get_md5(buffer);
-
-            // seekable stream
+            options.set_use_transactional_md5(false);
+            options.set_use_transactional_crc64(true);
+            fill_buffer(buffer);
             auto stream = concurrency::streams::bytestream::open_istream(buffer);
-            CHECK_THROW(m_blob.upload_block(get_block_id(0), stream, utility::string_t(), azure::storage::access_condition(), options, m_context), std::invalid_argument);
-        }
-
-        {
-            buffer.resize(azure::storage::protocol::max_block_size * 2);
-            fill_buffer_and_get_md5(buffer);
-
-            concurrency::streams::producer_consumer_buffer<uint8_t> pcbuffer;
-            pcbuffer.putn_nocopy(buffer.data(), azure::storage::protocol::max_block_size * 2);
-            pcbuffer.close(std::ios_base::out);
-
-            // non-seekable stream
-            auto stream = pcbuffer.create_istream();
-            CHECK_THROW(m_blob.upload_block(get_block_id(0), stream, utility::string_t(), azure::storage::access_condition(), options, m_context), std::invalid_argument);
+            CHECK_THROW(m_blob.upload_block(get_block_id(0), stream, dummy_crc64_val, azure::storage::access_condition(), options, m_context), azure::storage::storage_exception);
+            CHECK_UTF8_EQUAL(dummy_crc64, crc64_header);
         }
 
         check_block_list_equal(committed_blocks, uncommitted_blocks);
@@ -192,12 +290,21 @@ SUITE(Blob)
     {
         const size_t size = 6 * 1024 * 1024;
         azure::storage::blob_request_options options;
-
         options.set_store_blob_content_md5(false);
+
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(false);
         check_parallelism(upload_and_download(m_blob, size, 0, 0, true, options, 1, false), 1);
         m_blob.delete_blob();
         m_blob.properties().set_content_md5(utility::string_t());
 
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(true);
+        check_parallelism(upload_and_download(m_blob, size, 0, 0, true, options, 1, false), 1);
+        m_blob.delete_blob();
+        m_blob.properties().set_content_md5(utility::string_t());
+
+        options.set_use_transactional_crc64(false);
         options.set_use_transactional_md5(true);
         options.set_store_blob_content_md5(true);
         check_parallelism(upload_and_download(m_blob, size, 0, 0, true, options, 1, true), 1);
@@ -291,9 +398,22 @@ SUITE(Blob)
     {
         const size_t size = 6 * 1024 * 1024;
         azure::storage::blob_request_options options;
-        options.set_use_transactional_md5(true);
-
         options.set_store_blob_content_md5(false);
+
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(false);
+        check_parallelism(upload_and_download(m_blob, size, 0, 0, false, options, 3, false), 1);
+        m_blob.delete_blob();
+        m_blob.properties().set_content_md5(utility::string_t());
+
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(true);
+        check_parallelism(upload_and_download(m_blob, size, 0, 0, false, options, 3, false), 1);
+        m_blob.delete_blob();
+        m_blob.properties().set_content_md5(utility::string_t());
+
+        options.set_use_transactional_md5(true);
+        options.set_use_transactional_crc64(false);
         check_parallelism(upload_and_download(m_blob, size, 0, 0, false, options, 3, false), 1);
         m_blob.delete_blob();
         m_blob.properties().set_content_md5(utility::string_t());
@@ -339,19 +459,28 @@ SUITE(Blob)
     {
         const size_t buffer_size = 6 * 1024 * 1024;
         const size_t blob_size = 4 * 1024 * 1024;
-        azure::storage::blob_request_options options;
 
         const size_t buffer_offsets[2] = { 0, 1024 };
         for (auto buffer_offset : buffer_offsets)
         {
+            azure::storage::blob_request_options options;
             options.set_stream_write_size_in_bytes(blob_size);
-            options.set_use_transactional_md5(false);
             options.set_store_blob_content_md5(false);
             options.set_parallelism_factor(1);
+
+            options.set_use_transactional_md5(false);
+            options.set_use_transactional_crc64(false);
             check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, true, options, 1, false), 1);
             m_blob.delete_blob();
             m_blob.properties().set_content_md5(utility::string_t());
 
+            options.set_use_transactional_md5(false);
+            options.set_use_transactional_crc64(true);
+            check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, true, options, 1, false), 1);
+            m_blob.delete_blob();
+            m_blob.properties().set_content_md5(utility::string_t());
+
+            options.set_use_transactional_crc64(false);
             options.set_use_transactional_md5(true);
             options.set_store_blob_content_md5(true);
             check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, true, options, 1, true), 1);
@@ -377,19 +506,28 @@ SUITE(Blob)
     {
         const size_t buffer_size = 6 * 1024 * 1024;
         const size_t blob_size = 4 * 1024 * 1024;
-        azure::storage::blob_request_options options;
 
         const size_t buffer_offsets[2] = { 0, 1024 };
         for (auto buffer_offset : buffer_offsets)
         {
+            azure::storage::blob_request_options options;
             options.set_stream_write_size_in_bytes(blob_size);
-            options.set_use_transactional_md5(false);
             options.set_store_blob_content_md5(false);
             options.set_parallelism_factor(1);
+
+            options.set_use_transactional_md5(false);
+            options.set_use_transactional_crc64(false);
             check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, false, options, 1, false), 1);
             m_blob.delete_blob();
             m_blob.properties().set_content_md5(utility::string_t());
 
+            options.set_use_transactional_md5(false);
+            options.set_use_transactional_crc64(true);
+            check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, false, options, 1, false), 1);
+            m_blob.delete_blob();
+            m_blob.properties().set_content_md5(utility::string_t());
+
+            options.set_use_transactional_crc64(false);
             options.set_use_transactional_md5(true);
             options.set_store_blob_content_md5(true);
             check_parallelism(upload_and_download(m_blob, buffer_size, buffer_offset, blob_size, false, options, 1, true), 1);
@@ -449,7 +587,7 @@ SUITE(Blob)
         utility::string_t md5_header;
         m_context.set_sending_request([&md5_header] (web::http::http_request& request, azure::storage::operation_context)
         {
-            if (!request.headers().match(_XPLATSTR("x-ms-blob-content-md5"), md5_header))
+            if (!request.headers().match(azure::storage::protocol::ms_header_blob_content_md5, md5_header))
             {
                 md5_header.clear();
             }
@@ -468,7 +606,7 @@ SUITE(Blob)
         auto original_file = concurrency::streams::file_stream<uint8_t>::open_istream(file.path()).get();
         original_file.read_to_end(original_file_buffer).wait();
         original_file.close().wait();
-         
+
         concurrency::streams::container_buffer<std::vector<uint8_t>> downloaded_file_buffer;
         auto downloaded_file = concurrency::streams::file_stream<uint8_t>::open_istream(file2.path()).get();
         downloaded_file.read_to_end(downloaded_file_buffer).wait();
@@ -521,16 +659,21 @@ SUITE(Blob)
         CHECK_UTF8_EQUAL(_XPLATSTR("value2"), same_blob.metadata()[_XPLATSTR("key2")]);
     }
 
-    TEST_FIXTURE(block_blob_test_base, block_blob_block_list_use_transactional_md5)
+    TEST_FIXTURE(block_blob_test_base, block_blob_block_list_use_transactional_checksum)
     {
         m_blob.properties().set_content_type(_XPLATSTR("text/plain; charset=utf-8"));
 
         utility::string_t md5_header;
-        m_context.set_sending_request([&md5_header](web::http::http_request& request, azure::storage::operation_context)
+        utility::string_t crc64_header;
+        m_context.set_sending_request([&md5_header, &crc64_header](web::http::http_request& request, azure::storage::operation_context)
         {
             if (!request.headers().match(web::http::header_names::content_md5, md5_header))
             {
                 md5_header.clear();
+            }
+            if (!request.headers().match(azure::storage::protocol::ms_header_content_crc64, crc64_header))
+            {
+                crc64_header.clear();
             }
         });
 
@@ -538,7 +681,7 @@ SUITE(Blob)
         for (uint16_t i = 0; i < 10; i++)
         {
             auto id = get_block_id(i);
-            auto utf8_body = utility::conversions::to_utf8string(utility::conversions::print_string(i));
+            auto utf8_body = utility::conversions::to_utf8string(azure::storage::core::convert_to_string(i));
             auto stream = concurrency::streams::bytestream::open_istream(std::move(utf8_body));
             m_blob.upload_block(id, stream, utility::string_t(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
             blocks.push_back(azure::storage::block_list_item(id));
@@ -546,13 +689,23 @@ SUITE(Blob)
 
         azure::storage::blob_request_options options;
         options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(false);
         m_blob.upload_block_list(blocks, azure::storage::access_condition(), options, m_context);
         CHECK_UTF8_EQUAL(utility::string_t(), md5_header);
         CHECK_UTF8_EQUAL(_XPLATSTR("0123456789"), m_blob.download_text(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context));
 
         options.set_use_transactional_md5(true);
+        options.set_use_transactional_crc64(false);
         m_blob.upload_block_list(blocks, azure::storage::access_condition(), options, m_context);
+        CHECK(!md5_header.empty());
         CHECK_UTF8_EQUAL(m_context.request_results().back().content_md5(), md5_header);
+        CHECK_UTF8_EQUAL(_XPLATSTR("0123456789"), m_blob.download_text(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context));
+
+        options.set_use_transactional_md5(false);
+        options.set_use_transactional_crc64(true);
+        m_blob.upload_block_list(blocks, azure::storage::access_condition(), options, m_context);
+        CHECK(!crc64_header.empty());
+        CHECK_UTF8_EQUAL(m_context.request_results().back().content_crc64(), crc64_header);
         CHECK_UTF8_EQUAL(_XPLATSTR("0123456789"), m_blob.download_text(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context));
 
         m_context.set_sending_request(std::function<void(web::http::http_request &, azure::storage::operation_context)>());
@@ -623,7 +776,7 @@ SUITE(Blob)
         for (uint16_t i = 0; i < 10; i++)
         {
             auto id = get_block_id(i);
-            auto utf8_body = utility::conversions::to_utf8string(utility::conversions::print_string(i));
+            auto utf8_body = utility::conversions::to_utf8string(azure::storage::core::convert_to_string(i));
             auto stream = concurrency::streams::bytestream::open_istream(std::move(utf8_body));
             m_blob.upload_block(id, stream, utility::string_t(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
             blocks.push_back(azure::storage::block_list_item(id));
@@ -643,7 +796,7 @@ SUITE(Blob)
         CHECK_UTF8_EQUAL(_XPLATSTR("12356789"), m_blob.download_text(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context));
 
         auto id = get_block_id(4);
-        auto utf8_body = utility::conversions::to_utf8string(utility::conversions::print_string(4));
+        auto utf8_body = utility::conversions::to_utf8string(azure::storage::core::convert_to_string(4));
         auto stream = concurrency::streams::bytestream::open_istream(std::move(utf8_body));
         m_blob.upload_block(id, stream, utility::string_t(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
         blocks.insert(blocks.begin(), azure::storage::block_list_item(id));
@@ -654,12 +807,12 @@ SUITE(Blob)
         m_blob.upload_block_list(blocks, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
         CHECK_UTF8_EQUAL(_XPLATSTR("4123567894"), m_blob.download_text(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context));
     }
-    
+
     TEST_FIXTURE(block_blob_test_base, list_uncommitted_blobs)
     {
         std::vector<uint8_t> buffer;
         buffer.resize(16 * 1024);
-        fill_buffer_and_get_md5(buffer);
+        fill_buffer(buffer);
         auto stream = concurrency::streams::bytestream::open_istream(buffer);
         auto ucblob = m_container.get_block_blob_reference(_XPLATSTR("ucblob"));
         ucblob.upload_block(get_block_id(0), stream, utility::string_t(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);
@@ -694,5 +847,1079 @@ SUITE(Blob)
         CHECK_EQUAL(2U, m_context.request_results().size());
 
         m_context.set_response_received(std::function<void(web::http::http_request &, const web::http::http_response&, azure::storage::operation_context)>());
+    }
+
+    TEST_FIXTURE(block_blob_test_base, large_block_blob)
+    {
+        std::vector<uint8_t> buffer;
+        buffer.resize(12 * 1024 * 1024);
+
+        azure::storage::blob_request_options options;
+        CHECK_THROW(options.set_single_blob_upload_threshold_in_bytes(5001 * 1024 * 1024ULL), std::invalid_argument);
+        CHECK_THROW(options.set_stream_write_size_in_bytes(4001 * 1024 * 1024ULL), std::invalid_argument);
+
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
+        CHECK_EQUAL(2U, m_context.request_results().size()); // CreateContainer + PutBlob
+
+        options.set_single_blob_upload_threshold_in_bytes(buffer.size() / 2);
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
+        CHECK_EQUAL(6U, m_context.request_results().size()); // PutBlock * 3 + PutBlockList
+
+        options.set_stream_write_size_in_bytes(6 * 1024 * 1024);
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
+        CHECK_EQUAL(9U, m_context.request_results().size()); // PutBlock * 2 + PutBlockList
+    }
+
+    // Validate retry of download_range_to_stream_async.
+    TEST_FIXTURE(block_blob_test_base, block_blob_retry)
+    {
+        std::vector<uint8_t> buffer;
+        buffer.resize(1024);
+
+        azure::storage::blob_request_options options;
+        // attempt to retry one more time by default
+        options.set_retry_policy(azure::storage::linear_retry_policy(std::chrono::seconds(1), 1));
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), azure::storage::access_condition(), options, m_context);
+
+        Concurrency::streams::basic_ostream<uint8_t> target;
+        pplx::task<void> task;
+
+        // Validate no retry when stream is closed by Casablanca.
+        {
+            std::exception actual;
+            target = currupted_stream<uint8_t>::open_ostream(false, 1);
+            task = m_blob.download_range_to_stream_async(target, 0, 100, azure::storage::access_condition(), options, azure::storage::operation_context());
+            CHECK_STORAGE_EXCEPTION(task.get(), INTENDED_ERR_MSG);
+            CHECK_EQUAL(1, static_cast<const currupted_ostreambuf<uint8_t>*>(target.streambuf().get_base().get())->call_count());
+        }
+
+        // Validate exception will be propagated correctly even retry failed.
+        {
+            std::exception actual;
+            target = currupted_stream<uint8_t>::open_ostream(true, 2);
+            task = m_blob.download_range_to_stream_async(target, 0, 100, azure::storage::access_condition(), options, azure::storage::operation_context());
+            CHECK_STORAGE_EXCEPTION(task.get(), INTENDED_ERR_MSG);
+            CHECK_EQUAL(2, static_cast<const currupted_ostreambuf<uint8_t>*>(target.streambuf().get_base().get())->call_count());
+        }
+
+        // Validate no exception thrown when retry success.
+        {
+            target = currupted_stream<uint8_t>::open_ostream(true, 1);
+            task = m_blob.download_range_to_stream_async(target, 0, 100, azure::storage::access_condition(), options, azure::storage::operation_context());
+            CHECK_NOTHROW(task.get());
+            CHECK_EQUAL(2, static_cast<const currupted_ostreambuf<uint8_t>*>(target.streambuf().get_base().get())->call_count());
+        }
+    }
+
+    // Validate set standard blob tier for block blob on standard account.
+    TEST_FIXTURE(block_blob_test_base, block_blob_standard_tier)
+    {
+        // preparation
+        azure::storage::blob_request_options options;
+        m_blob.upload_text(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+
+        // test can convert hot->cool or cool->hot.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::hot, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+
+        // test standard storage can set archive.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+    }
+
+    // Validate set standard blob tier for block blob on blob storage account.
+    TEST_FIXTURE(premium_block_blob_test_base, block_blob_premium_tier)
+    {
+        // preparation
+        azure::storage::blob_request_options options;
+        m_blob.upload_text(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+
+        // test can convert hot->cool or cool->hot.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::hot, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+
+        // test premium storage can set archive.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+
+        // test archive storage can set back to archive.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been changed.
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+        // validate server has been changed
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+
+        // test archive storage can set back to cool.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, azure::storage::access_condition(), options, azure::storage::operation_context());
+        // validate local has been not been updated.
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        // validate server has been archive information
+        m_blob.download_attributes();
+        CHECK(azure::storage::archive_status::rehydrate_pending_to_cool == m_blob.properties().archive_status());
+        //validate cannot set back to archive immediately
+        CHECK_STORAGE_EXCEPTION(m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, azure::storage::access_condition(), options, azure::storage::operation_context()), REHYDRATE_CANNOT_SET_TO_ARCHIVE_ERR_MSG);
+    }
+
+    TEST_FIXTURE(premium_block_blob_test_base, block_blob_premium_tier_with_lease)
+    {
+        // preparation
+        azure::storage::blob_request_options options;
+        m_blob.upload_text(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+
+        // acquire a lease
+        auto lease_id = m_blob.acquire_lease(azure::storage::lease_time(), _XPLATSTR(""));
+
+        // set the acquired lease to access condition.
+        azure::storage::access_condition condition;
+        condition.set_lease_id(lease_id);
+
+        // test can convert hot->cool or cool->hot.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, condition, options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::hot, condition, options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::hot == m_blob.properties().standard_blob_tier());
+
+        // test premium storage can set archive.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, condition, options, azure::storage::operation_context());
+        // validate local has been updated.
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+        // validate server has been updated
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+
+        // test archive storage can set back to archive.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, condition, options, azure::storage::operation_context());
+        // validate local has been changed.
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+        // validate server has been changed
+        m_blob.download_attributes();
+        CHECK(azure::storage::standard_blob_tier::archive == m_blob.properties().standard_blob_tier());
+
+        // test archive storage can set back to cool.
+        m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, condition, options, azure::storage::operation_context());
+        // validate local has been not been updated.
+        CHECK(azure::storage::standard_blob_tier::cool == m_blob.properties().standard_blob_tier());
+        // validate server has been archive information
+        m_blob.download_attributes();
+        CHECK(azure::storage::archive_status::rehydrate_pending_to_cool == m_blob.properties().archive_status());
+        //validate cannot set back to archive immediately
+        CHECK_STORAGE_EXCEPTION(m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, condition, options, azure::storage::operation_context()), REHYDRATE_CANNOT_SET_TO_ARCHIVE_ERR_MSG);
+        CHECK(azure::storage::archive_status::rehydrate_pending_to_cool == m_blob.properties().archive_status());
+
+        // validate no lease id would report failure.
+        CHECK_STORAGE_EXCEPTION(m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::archive, azure::storage::access_condition(), options, azure::storage::operation_context()), ACTIVE_LEASE_ERROR_MESSAGE);
+        CHECK(azure::storage::archive_status::rehydrate_pending_to_cool == m_blob.properties().archive_status());
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_create_delete_cancellation)
+    {
+
+        {
+            // cancel the cancellation prior to the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+            cancel_token_src.cancel();
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            // cancel the cancellation during the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(3)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                task_result.get();
+                // cancel the cancellation after the operation
+                cancel_token_src.cancel();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+
+        {
+            // cancel the cancellation prior to the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            // cancel the cancellation during the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(3)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                task_result.get();
+                // cancel the cancellation after the operation
+                cancel_token_src.cancel();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_create_delete_timeout)
+    {
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(1));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(3));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(10000));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_text_async(_XPLATSTR("test"), azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(1));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(3));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(10000));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_create_delete_cancellation_timeout)
+    {
+        {
+            //when cancellation first
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(100));
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            //when timeout first
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(3));
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.delete_blob_if_exists_async(azure::storage::delete_snapshots_option::include_snapshots, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(30)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_open_read_write_cancellation)
+    {
+        std::vector<uint8_t> buffer;
+        buffer.resize(4 * 1024 * 1024);
+        fill_buffer(buffer);
+
+        {
+            // cancel the cancellation prior to the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            // cancel the cancellation prior to the operation and write to a canceled ostream.
+            auto cancel_token_src = pplx::cancellation_token_source();
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            // cancel the cancellation during the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+                // cancel the cancellation after the operation
+                cancel_token_src.cancel();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer));
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            // cancel the cancellation prior to the operation
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                auto is = task_result.get();
+                is.read().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            // cancel the cancellation during the operation
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(10)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                auto is = task_result.get();
+                is.read().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), azure::storage::blob_request_options(), m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(10)); //sleep for sometime before canceling the request and see result.
+                auto is = task_result.get();
+                is.read().get();
+                // cancel the cancellation after the operation
+                cancel_token_src.cancel();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_open_read_write_timeout)
+    {
+        std::vector<uint8_t> buffer;
+        buffer.resize(4 * 1024 * 1024);
+        fill_buffer(buffer);
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(1));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), options, m_context);
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(20));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), options, m_context);
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::seconds(20));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), options, m_context);
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer));
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(1));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), options, m_context);
+                auto is = task_result.get();
+                is.read().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(20));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), options, m_context);
+                auto is = task_result.get();
+                is.read().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::seconds(30));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_read_async(azure::storage::access_condition(), options, m_context);
+                auto is = task_result.get();
+                is.read().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_open_read_write_cancellation_timeout)
+    {
+        std::vector<uint8_t> buffer;
+        buffer.resize(4 * 1024 * 1024);
+        fill_buffer(buffer);
+
+        {
+            //when cancellation first
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(100));
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                cancel_token_src.cancel();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            //when timeout first
+            auto options = azure::storage::blob_request_options();
+            options.set_maximum_execution_time(std::chrono::milliseconds(10));
+            auto cancel_token_src = pplx::cancellation_token_source();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.open_write_async(azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                auto os = task_result.get();
+                os.streambuf().putn_nocopy(buffer.data(), buffer.size()).wait();
+                std::this_thread::sleep_for(std::chrono::milliseconds(30)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                os.close().get();
+            }
+            catch (std::exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_concurrent_upload_cancellation_timeout)
+    {
+        utility::size64_t length = 260 * 1024 * 1024;
+        std::vector<uint8_t> buffer;
+        buffer.resize(length);
+        fill_buffer(buffer);
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            auto options = azure::storage::blob_request_options();
+            options.set_parallelism_factor(4);
+            options.set_maximum_execution_time(std::chrono::milliseconds(1000));
+            // cancel the cancellation prior to the operation
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            auto options = azure::storage::blob_request_options();
+            options.set_parallelism_factor(4);
+            options.set_maximum_execution_time(std::chrono::milliseconds(1000));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(300)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_parallelism_factor(4);
+            options.set_maximum_execution_time(std::chrono::milliseconds(1000));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_single_upload_cancellation_timeout)
+    {
+        utility::size64_t length = 128 * 1024 * 1024;
+        std::vector<uint8_t> buffer;
+        buffer.resize(length);
+        fill_buffer(buffer);
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            auto options = azure::storage::blob_request_options();
+            options.set_single_blob_upload_threshold_in_bytes(length * 2);
+            options.set_maximum_execution_time(std::chrono::milliseconds(500));
+            // cancel the cancellation prior to the operation
+            cancel_token_src.cancel();
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto cancel_token_src = pplx::cancellation_token_source();
+            auto options = azure::storage::blob_request_options();
+            options.set_single_blob_upload_threshold_in_bytes(length * 2);
+            options.set_maximum_execution_time(std::chrono::milliseconds(500));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context, cancel_token_src.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds(300)); //sleep for sometime before canceling the request and see result.
+                cancel_token_src.cancel();
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL(OPERATION_CANCELED, ex_msg);
+        }
+
+        {
+            auto options = azure::storage::blob_request_options();
+            options.set_single_blob_upload_threshold_in_bytes(length * 2);
+            options.set_maximum_execution_time(std::chrono::milliseconds(500));
+
+            std::string ex_msg;
+
+            try
+            {
+                auto task_result = m_blob.upload_from_stream_async(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), options, m_context);
+                task_result.get();
+            }
+            catch (azure::storage::storage_exception& e)
+            {
+                ex_msg = std::string(e.what());
+            }
+
+            CHECK_EQUAL("The client could not finish the operation within specified timeout.", ex_msg);
+        }
+    }
+
+    TEST_FIXTURE(block_blob_test_base, block_blob_cpkv)
+    {
+        utility::size64_t length = 128 * 1024;
+        std::vector<uint8_t> buffer(length);
+        fill_buffer(buffer);
+        auto empty_options = azure::storage::blob_request_options();
+        auto cpk_options = azure::storage::blob_request_options();
+        std::vector<uint8_t> key(32);
+        fill_buffer(key);
+        cpk_options.set_encryption_key(key);
+
+        m_blob.upload_from_stream(concurrency::streams::bytestream::open_istream(buffer), length, azure::storage::access_condition(), cpk_options, m_context);
+
+        for (const auto& options : { empty_options, cpk_options })
+        {
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            concurrency::streams::ostream download_stream(download_buffer);
+            if (options.encryption_key().empty())
+            {
+                CHECK_THROW(m_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context), azure::storage::storage_exception);
+            }
+            else
+            {
+                m_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context);
+                CHECK(!m_blob.properties().encryption_key_sha256().empty());
+                CHECK(buffer == download_buffer.collection());
+            }
+        }
+
+        auto binary_data = get_random_binary_data();
+        binary_data.resize(10);
+        utility::string_t block_id = utility::conversions::to_base64(binary_data);
+        m_blob.upload_block(block_id, concurrency::streams::bytestream::open_istream(buffer), azure::storage::checksum_none, azure::storage::access_condition(), cpk_options, m_context);
+        std::vector<azure::storage::block_list_item> blocks_id;
+        blocks_id.emplace_back(block_id);
+        m_blob.upload_block_list(blocks_id, azure::storage::access_condition(), cpk_options, m_context);
+
+        for (const auto& options : { empty_options, cpk_options })
+        {
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            concurrency::streams::ostream download_stream(download_buffer);
+            if (options.encryption_key().empty())
+            {
+                CHECK_THROW(m_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context), azure::storage::storage_exception);
+            }
+            else
+            {
+                m_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context);
+                CHECK(!m_blob.properties().encryption_key_sha256().empty());
+                CHECK(buffer == download_buffer.collection());
+            }
+        }
+
+        m_blob.properties().set_content_type(_XPLATSTR("application/octet-stream"));
+        m_blob.properties().set_content_language(_XPLATSTR("en-US"));
+        CHECK_THROW(m_blob.upload_metadata(azure::storage::access_condition(), empty_options, m_context), azure::storage::storage_exception);
+        CHECK_THROW(m_blob.download_attributes(azure::storage::access_condition(), empty_options, m_context), azure::storage::storage_exception);
+        m_blob.upload_properties(azure::storage::access_condition(), empty_options, m_context);
+        m_blob.upload_metadata(azure::storage::access_condition(), cpk_options, m_context);
+        m_blob.download_attributes(azure::storage::access_condition(), cpk_options, m_context);
+
+        CHECK_THROW(m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, azure::storage::access_condition(), empty_options, m_context), azure::storage::storage_exception);
+        CHECK_THROW(m_blob.set_standard_blob_tier(azure::storage::standard_blob_tier::cool, azure::storage::access_condition(), cpk_options, m_context), azure::storage::storage_exception);
+
+        CHECK_THROW(m_blob.create_snapshot(azure::storage::cloud_metadata(), azure::storage::access_condition(), empty_options, m_context), azure::storage::storage_exception);
+        auto snapshot_blob = m_blob.create_snapshot(azure::storage::cloud_metadata(), azure::storage::access_condition(), cpk_options, m_context);
+        CHECK(snapshot_blob.is_snapshot());
+        for (const auto& options : { empty_options, cpk_options })
+        {
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+            concurrency::streams::ostream download_stream(download_buffer);
+            if (options.encryption_key().empty())
+            {
+                CHECK_THROW(snapshot_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context), azure::storage::storage_exception);
+            }
+            else
+            {
+                snapshot_blob.download_to_stream(download_stream, azure::storage::access_condition(), options, m_context);
+                CHECK(!snapshot_blob.properties().encryption_key_sha256().empty());
+                CHECK(buffer == download_buffer.collection());
+            }
+        }
     }
 }

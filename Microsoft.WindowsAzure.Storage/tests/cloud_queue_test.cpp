@@ -110,7 +110,7 @@ SUITE(Queue)
         CHECK(message.pop_receipt().empty());
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
     }
 
@@ -126,7 +126,7 @@ SUITE(Queue)
         CHECK(message.pop_receipt().empty());
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
 
         content = get_random_string();
@@ -138,7 +138,7 @@ SUITE(Queue)
         CHECK(message.pop_receipt().empty());
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
     }
 
@@ -154,7 +154,7 @@ SUITE(Queue)
         CHECK(message.pop_receipt().empty());
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
 
         content = get_random_binary_data();
@@ -166,7 +166,7 @@ SUITE(Queue)
         CHECK(message.pop_receipt().empty());
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
     }
 
@@ -183,7 +183,7 @@ SUITE(Queue)
         CHECK(pop_receipt.compare(message.pop_receipt()) == 0);
         CHECK(!message.expiration_time().is_initialized());
         CHECK(!message.insertion_time().is_initialized());
-        CHECK(!message.next_visibile_time().is_initialized());
+        CHECK(!message.next_visible_time().is_initialized());
         CHECK_EQUAL(0, message.dequeue_count());
     }
 
@@ -777,6 +777,123 @@ SUITE(Queue)
         CHECK(!context.request_results()[0].extended_error().message().empty());
     }
 
+    TEST_FIXTURE(queue_service_test_base, Queue_UpdateAndDelQueuedMessage)
+    {
+        azure::storage::cloud_queue queue = get_queue();
+        utility::string_t content = get_random_string();
+
+        {
+            azure::storage::queue_request_options options;
+            azure::storage::cloud_queue_message message;
+            azure::storage::operation_context context;
+            print_client_request_id(context, _XPLATSTR(""));
+
+            message.set_content(content);
+
+            queue.add_message(message, std::chrono::seconds(15 * 60), std::chrono::seconds(0), options, context);
+
+            CHECK(!message.id().empty());
+            CHECK(!message.pop_receipt().empty());
+            CHECK(message.insertion_time().is_initialized());
+            CHECK(message.expiration_time().is_initialized());
+            CHECK(message.next_visible_time().is_initialized());
+
+            utility::string_t old_pop_recepit = message.pop_receipt();
+            utility::datetime old_next_visible_time = message.next_visible_time();
+            message.set_content(get_random_string());
+            queue.update_message(message, std::chrono::seconds(15 * 60), true, options, context);
+
+            CHECK(old_pop_recepit.compare(message.pop_receipt()) != 0);
+            CHECK(old_next_visible_time != message.next_visible_time());
+
+            CHECK(!context.client_request_id().empty());
+            CHECK(context.start_time().is_initialized());
+            CHECK(context.end_time().is_initialized());
+            CHECK_EQUAL(2U, context.request_results().size());
+            CHECK(context.request_results()[1].is_response_available());
+            CHECK(context.request_results()[1].start_time().is_initialized());
+            CHECK(context.request_results()[1].end_time().is_initialized());
+            CHECK(context.request_results()[1].target_location() != azure::storage::storage_location::unspecified);
+            CHECK_EQUAL(web::http::status_codes::NoContent, context.request_results()[1].http_status_code());
+            CHECK(!context.request_results()[1].service_request_id().empty());
+            CHECK(context.request_results()[1].request_date().is_initialized());
+            CHECK(context.request_results()[1].content_md5().empty());
+            CHECK(context.request_results()[1].etag().empty());
+            CHECK(context.request_results()[1].extended_error().code().empty());
+            CHECK(context.request_results()[1].extended_error().message().empty());
+            CHECK(context.request_results()[1].extended_error().details().empty());
+        }
+
+        {
+            azure::storage::queue_request_options options;
+            azure::storage::cloud_queue_message message;
+            azure::storage::operation_context context;
+            print_client_request_id(context, _XPLATSTR(""));
+
+            message.set_content(content);
+
+            queue.add_message(message, std::chrono::seconds(15 * 60), std::chrono::seconds(0), options, context);
+            queue.delete_message(message, options, context);
+
+            CHECK(!context.client_request_id().empty());
+            CHECK(context.start_time().is_initialized());
+            CHECK(context.end_time().is_initialized());
+            CHECK_EQUAL(2U, context.request_results().size());
+            CHECK(context.request_results()[1].is_response_available());
+            CHECK(context.request_results()[1].start_time().is_initialized());
+            CHECK(context.request_results()[1].end_time().is_initialized());
+            CHECK(context.request_results()[1].target_location() != azure::storage::storage_location::unspecified);
+            CHECK_EQUAL(web::http::status_codes::NoContent, context.request_results()[1].http_status_code());
+            CHECK(!context.request_results()[1].service_request_id().empty());
+            CHECK(context.request_results()[1].request_date().is_initialized());
+            CHECK(context.request_results()[1].content_md5().empty());
+            CHECK(context.request_results()[1].etag().empty());
+            CHECK(context.request_results()[1].extended_error().code().empty());
+            CHECK(context.request_results()[1].extended_error().message().empty());
+            CHECK(context.request_results()[1].extended_error().details().empty());
+        }
+
+        queue.delete_queue();
+    }
+
+    TEST_FIXTURE(queue_service_test_base, Queue_Special_Message_TTL)
+    {
+        azure::storage::cloud_queue queue = get_queue();
+        {
+            utility::string_t content = get_random_string();
+            azure::storage::cloud_queue_message message;
+            std::chrono::seconds time_to_live;
+            std::chrono::seconds initial_visibility_timeout;
+            azure::storage::queue_request_options options;
+            azure::storage::operation_context context;
+            print_client_request_id(context, _XPLATSTR(""));
+            message.set_content(content);
+            time_to_live = std::chrono::seconds(-1);
+            initial_visibility_timeout = std::chrono::seconds(0);
+            queue.add_message(message, time_to_live, initial_visibility_timeout, options, context);
+            std::vector<azure::storage::cloud_queue_message> messages = queue.get_messages(1U, initial_visibility_timeout, options, context);
+            CHECK(content == messages[0].content_as_string());
+            CHECK(messages[0].expiration_time().is_initialized());
+        }
+
+        {
+            utility::string_t content = get_random_string();
+            azure::storage::cloud_queue_message message;
+            std::chrono::seconds time_to_live;
+            std::chrono::seconds initial_visibility_timeout;
+            azure::storage::queue_request_options options;
+            azure::storage::operation_context context;
+            print_client_request_id(context, _XPLATSTR(""));
+            message.set_content(content);
+            time_to_live = std::chrono::seconds(7 * 24 * 60 * 60 + 1);
+            initial_visibility_timeout = std::chrono::seconds(0);
+            queue.add_message(message, time_to_live, initial_visibility_timeout, options, context);
+            std::vector<azure::storage::cloud_queue_message> messages = queue.get_messages(1U, initial_visibility_timeout, options, context);
+            CHECK(content == messages[0].content_as_string());
+            CHECK(messages[0].expiration_time().is_initialized());
+        }
+    }
+
     TEST_FIXTURE(queue_service_test_base, Queue_Messages)
     {
         azure::storage::cloud_queue queue = get_queue();
@@ -893,7 +1010,7 @@ SUITE(Queue)
                 CHECK(!message.pop_receipt().empty());
                 CHECK(message.insertion_time().is_initialized());
                 CHECK(message.expiration_time().is_initialized());
-                CHECK(message.next_visibile_time().is_initialized());
+                CHECK(message.next_visible_time().is_initialized());
             }
 
             CHECK(!context.client_request_id().empty());
@@ -918,7 +1035,7 @@ SUITE(Queue)
 
         {
             utility::string_t old_pop_recepit = message1.pop_receipt();
-            utility::datetime old_next_visible_time = message1.next_visibile_time();
+            utility::datetime old_next_visible_time = message1.next_visible_time();
 
             std::chrono::seconds visibility_timeout;
             bool update_content;
@@ -936,10 +1053,10 @@ SUITE(Queue)
             CHECK(!message1.pop_receipt().empty());
             CHECK(message1.insertion_time().is_initialized());
             CHECK(message1.expiration_time().is_initialized());
-            CHECK(message1.next_visibile_time().is_initialized());
+            CHECK(message1.next_visible_time().is_initialized());
 
             CHECK(old_pop_recepit.compare(message1.pop_receipt()) != 0);
-            CHECK(old_next_visible_time != message1.next_visibile_time());
+            CHECK(old_next_visible_time != message1.next_visible_time());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -980,7 +1097,7 @@ SUITE(Queue)
                 CHECK(message.pop_receipt().empty());
                 CHECK(message.insertion_time().is_initialized());
                 CHECK(message.expiration_time().is_initialized());
-                CHECK(!message.next_visibile_time().is_initialized());
+                CHECK(!message.next_visible_time().is_initialized());
             }
 
             CHECK(!context.client_request_id().empty());
@@ -1013,7 +1130,7 @@ SUITE(Queue)
             CHECK(!message2.pop_receipt().empty());
             CHECK(message2.insertion_time().is_initialized());
             CHECK(message2.expiration_time().is_initialized());
-            CHECK(message2.next_visibile_time().is_initialized());
+            CHECK(message2.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1045,7 +1162,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(message.insertion_time().is_initialized());
             CHECK(message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1080,7 +1197,7 @@ SUITE(Queue)
             CHECK(!message3.pop_receipt().empty());
             CHECK(message3.insertion_time().is_initialized());
             CHECK(message3.expiration_time().is_initialized());
-            CHECK(message3.next_visibile_time().is_initialized());
+            CHECK(message3.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1112,7 +1229,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(!message.insertion_time().is_initialized());
             CHECK(!message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1147,7 +1264,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(!message.insertion_time().is_initialized());
             CHECK(!message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1172,7 +1289,7 @@ SUITE(Queue)
         {
             new_content = get_random_string();
             utility::string_t old_pop_recepit = message3.pop_receipt();
-            utility::datetime old_next_visible_time = message3.next_visibile_time();
+            utility::datetime old_next_visible_time = message3.next_visible_time();
 
             std::chrono::seconds visibility_timeout;
             bool update_content;
@@ -1191,10 +1308,10 @@ SUITE(Queue)
             CHECK(!message3.pop_receipt().empty());
             CHECK(message3.insertion_time().is_initialized());
             CHECK(message3.expiration_time().is_initialized());
-            CHECK(message3.next_visibile_time().is_initialized());
+            CHECK(message3.next_visible_time().is_initialized());
 
             CHECK(old_pop_recepit.compare(message3.pop_receipt()) != 0);
-            CHECK(old_next_visible_time != message3.next_visibile_time());
+            CHECK(old_next_visible_time != message3.next_visible_time());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1226,7 +1343,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(message.insertion_time().is_initialized());
             CHECK(message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1266,7 +1383,7 @@ SUITE(Queue)
             CHECK(!message3.pop_receipt().empty());
             CHECK(message3.insertion_time().is_initialized());
             CHECK(message3.expiration_time().is_initialized());
-            CHECK(message3.next_visibile_time().is_initialized());
+            CHECK(message3.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1298,7 +1415,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(message.insertion_time().is_initialized());
             CHECK(message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1355,7 +1472,7 @@ SUITE(Queue)
             CHECK(message.pop_receipt().empty());
             CHECK(!message.insertion_time().is_initialized());
             CHECK(!message.expiration_time().is_initialized());
-            CHECK(!message.next_visibile_time().is_initialized());
+            CHECK(!message.next_visible_time().is_initialized());
 
             CHECK(!context.client_request_id().empty());
             CHECK(context.start_time().is_initialized());
@@ -1394,7 +1511,7 @@ SUITE(Queue)
             std::chrono::seconds initial_visibility_timeout;
 
             message.set_content(content);
-            time_to_live = std::chrono::seconds(-1);
+            time_to_live = std::chrono::seconds(-2);
             initial_visibility_timeout = std::chrono::seconds(0);
 
             CHECK_THROW(queue.add_message(message, time_to_live, initial_visibility_timeout, options, context), std::invalid_argument);
@@ -1407,18 +1524,6 @@ SUITE(Queue)
 
             message.set_content(content);
             time_to_live = std::chrono::seconds(0);
-            initial_visibility_timeout = std::chrono::seconds(0);
-
-            CHECK_THROW(queue.add_message(message, time_to_live, initial_visibility_timeout, options, context), std::invalid_argument);
-        }
-
-        {
-            azure::storage::cloud_queue_message message;
-            std::chrono::seconds time_to_live;
-            std::chrono::seconds initial_visibility_timeout;
-
-            message.set_content(content);
-            time_to_live = std::chrono::seconds(30 * 24 * 60 * 60);
             initial_visibility_timeout = std::chrono::seconds(0);
 
             CHECK_THROW(queue.add_message(message, time_to_live, initial_visibility_timeout, options, context), std::invalid_argument);
@@ -1764,10 +1869,10 @@ SUITE(Queue)
             CHECK(!message2.pop_receipt().empty());
             CHECK(message2.insertion_time().is_initialized());
             CHECK(message2.expiration_time().is_initialized());
-            CHECK(message2.next_visibile_time().is_initialized());
+            CHECK(message2.next_visible_time().is_initialized());
 
             utility::string_t old_pop_recepit = message2.pop_receipt();
-            utility::datetime old_next_visible_time = message2.next_visibile_time();
+            utility::datetime old_next_visible_time = message2.next_visible_time();
 
             UNREFERENCED_PARAMETER(old_pop_recepit);
             UNREFERENCED_PARAMETER(old_next_visible_time);

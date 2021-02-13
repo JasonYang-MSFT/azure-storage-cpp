@@ -20,6 +20,8 @@
 #include "check_macros.h"
 #include "blob_test_base.h"
 
+#include "wascore/util.h"
+
 #pragma region Fixture
 
 bool file_test_base::wait_for_copy(azure::storage::cloud_file& file)
@@ -45,6 +47,9 @@ SUITE(File)
         CHECK(m_file.create_if_not_exists(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context));
         CHECK(!m_file.create_if_not_exists(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context));
         CHECK_EQUAL(m_file.properties().length(), 1024U);
+        m_file.download_attributes();
+
+        CHECK_EQUAL(m_file.properties().server_encrypted(), true);
 
         CHECK(m_file.exists(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context));
 
@@ -108,6 +113,167 @@ SUITE(File)
         CHECK_EQUAL(0U, same_file.metadata().size());
     }
 
+    TEST_FIXTURE(file_test_base, file_properties)
+    {
+        m_file.create_if_not_exists(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(1024U, m_file.properties().length());
+
+        {
+            m_file.properties().set_content_md5(_XPLATSTR(""));
+            m_file.upload_properties();
+            CHECK(_XPLATSTR("") == m_file.properties().content_md5());
+
+            auto same_file = m_file.get_parent_share_reference().get_directory_reference(m_directory.name()).get_file_reference(m_file.name());
+            auto stream = concurrency::streams::container_stream<std::vector<uint8_t>>::open_ostream();
+            azure::storage::file_request_options options;
+            options.set_use_transactional_md5(true);
+            same_file.download_range_to_stream(stream, 0, 128, azure::storage::file_access_condition(), options, m_context);
+            CHECK(_XPLATSTR("") == same_file.properties().content_md5());
+        }
+    }
+
+    TEST_FIXTURE(file_test_base, file_smb_properties)
+    {
+        m_file.properties().set_permission(azure::storage::cloud_file_properties::inherit);
+        m_file.properties().set_attributes(azure::storage::cloud_file_attributes::none);
+        m_file.properties().set_creation_time(azure::storage::cloud_file_properties::now);
+        m_file.properties().set_last_write_time(azure::storage::cloud_file_properties::now);
+
+        m_file.create(1024);
+        auto properties = m_file.properties();
+        CHECK(properties.permission().empty());
+        CHECK(!properties.permission_key().empty());
+        CHECK(properties.attributes() != azure::storage::cloud_file_attributes::none);
+        CHECK(properties.creation_time().is_initialized());
+        CHECK(properties.last_write_time().is_initialized());
+        CHECK(properties.change_time().is_initialized());
+        CHECK(!properties.file_id().empty());
+        CHECK(!properties.file_parent_id().empty());
+
+        m_file.properties().set_permission(azure::storage::cloud_file_properties::preserve);
+        m_file.properties().set_attributes(azure::storage::cloud_file_attributes::preserve);
+        m_file.properties().set_creation_time(azure::storage::cloud_file_properties::preserve);
+        m_file.properties().set_last_write_time(azure::storage::cloud_file_properties::preserve);
+
+        m_file.upload_properties();
+        CHECK(m_file.properties().permission().empty());
+        CHECK(m_file.properties().permission_key() == properties.permission_key());
+        CHECK(m_file.properties().attributes() == properties.attributes());
+        CHECK(m_file.properties().creation_time() == properties.creation_time());
+        CHECK(m_file.properties().last_write_time() == properties.last_write_time());
+        CHECK(m_file.properties().file_id() == properties.file_id());
+        CHECK(m_file.properties().file_parent_id() == properties.file_parent_id());
+
+        utility::string_t permission = m_share.download_file_permission(m_file.properties().permission_key());
+        m_file.properties().set_permission(permission);
+        m_file.properties().set_attributes(
+            azure::storage::cloud_file_attributes::readonly | azure::storage::cloud_file_attributes::hidden | azure::storage::cloud_file_attributes::system |
+            azure::storage::cloud_file_attributes::archive | azure::storage::cloud_file_attributes::temporary | azure::storage::cloud_file_attributes::offline |
+            azure::storage::cloud_file_attributes::not_content_indexed | azure::storage::cloud_file_attributes::no_scrub_data);
+        auto new_attributes = m_file.properties().attributes();
+        auto current_time = utility::datetime::utc_now();
+        m_file.properties().set_creation_time(current_time);
+        m_file.properties().set_last_write_time(current_time);
+
+        m_file.upload_properties();
+        CHECK(m_file.properties().permission().empty());
+        CHECK(!m_file.properties().permission_key().empty());
+        CHECK(m_file.properties().attributes() == new_attributes);
+        CHECK(m_file.properties().creation_time() == current_time);
+        CHECK(m_file.properties().last_write_time() == current_time);
+
+        m_file.upload_properties();
+    }
+
+    TEST_FIXTURE(file_test_base, directory_smb_properties)
+    {
+        azure::storage::cloud_file_directory directory = m_share.get_directory_reference(get_random_string());
+        directory.properties().set_permission(azure::storage::cloud_file_directory_properties::inherit);
+        directory.properties().set_attributes(azure::storage::cloud_file_attributes::none);
+        directory.properties().set_creation_time(azure::storage::cloud_file_directory_properties::now);
+        directory.properties().set_last_write_time(azure::storage::cloud_file_directory_properties::now);
+        directory.create();
+
+        auto properties = directory.properties();
+        CHECK(properties.permission().empty());
+        CHECK(!properties.permission_key().empty());
+        CHECK(properties.attributes() != azure::storage::cloud_file_attributes::none);
+        CHECK(properties.creation_time().is_initialized());
+        CHECK(properties.last_write_time().is_initialized());
+        CHECK(!properties.file_id().empty());
+
+        directory.properties().set_permission(azure::storage::cloud_file_directory_properties::preserve);
+        directory.properties().set_attributes(azure::storage::cloud_file_attributes::preserve);
+        directory.properties().set_creation_time(azure::storage::cloud_file_directory_properties::preserve);
+        directory.properties().set_last_write_time(azure::storage::cloud_file_directory_properties::preserve);
+
+        directory.upload_properties();
+        CHECK(directory.properties().permission().empty());
+        CHECK(directory.properties().permission_key() == properties.permission_key());
+        CHECK(directory.properties().attributes() == properties.attributes());
+        CHECK(directory.properties().creation_time() == properties.creation_time());
+        CHECK(directory.properties().last_write_time() == properties.last_write_time());
+        CHECK(directory.properties().file_id() == properties.file_id());
+        CHECK(directory.properties().file_parent_id() == properties.file_parent_id());
+
+        utility::string_t permission = m_share.download_file_permission(directory.properties().permission_key());
+        directory.properties().set_permission(permission);
+        directory.properties().set_attributes(
+            azure::storage::cloud_file_attributes::readonly | azure::storage::cloud_file_attributes::hidden | azure::storage::cloud_file_attributes::system |
+            azure::storage::cloud_file_attributes::directory | azure::storage::cloud_file_attributes::offline | azure::storage::cloud_file_attributes::not_content_indexed |
+            azure::storage::cloud_file_attributes::no_scrub_data);
+        auto new_attributes = directory.properties().attributes();
+        auto current_time = utility::datetime::utc_now();
+        directory.properties().set_creation_time(current_time);
+        directory.properties().set_last_write_time(current_time);
+
+        directory.upload_properties();
+        CHECK(directory.properties().permission().empty());
+        CHECK(!directory.properties().permission_key().empty());
+        CHECK(directory.properties().attributes() == new_attributes);
+        CHECK(directory.properties().creation_time() == current_time);
+        CHECK(directory.properties().last_write_time() == current_time);
+
+        directory.upload_properties();
+    }
+
+    TEST_FIXTURE(file_test_base, file_properties_resize_wont_work)
+    {
+        m_file.create_if_not_exists(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(1024U, m_file.properties().length());
+
+        //Using newly created properties does not set the size of file back to zero.
+        m_file.properties() = azure::storage::cloud_file_properties();
+        m_file.upload_properties();
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(1024U, m_file.properties().length());
+
+        //Using the properties that explicitly equals to zero to upload properties will not set the size of the file back to zero.
+        m_file.resize(0U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(0U, m_file.properties().length());
+        auto zero_properties = m_file.properties();
+        m_file.resize(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(1024U, m_file.properties().length());
+        m_file.properties() = zero_properties;
+        m_file.upload_properties();
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(1024U, m_file.properties().length());
+
+        //Using the properties that explicitly equals to non-zero will not set the size of the file to this non-zero value.
+        auto non_zero_properties = m_file.properties();
+        m_file.resize(0U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(0U, m_file.properties().length());
+        m_file.properties() = non_zero_properties;
+        m_file.upload_properties();
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(0U, m_file.properties().length());
+    }
+
     TEST_FIXTURE(file_test_base, file_resize)
     {
         m_file.create_if_not_exists(1024U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
@@ -122,6 +288,10 @@ SUITE(File)
         m_file.resize(length, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         CHECK_EQUAL(length, m_file.properties().length());
+        //Setting the length back to zero and see that it works.
+        m_file.resize(0U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        m_file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK_EQUAL(0U, m_file.properties().length());
     }
 
     TEST_FIXTURE(file_test_base, file_get_parent_directory_ref)
@@ -220,7 +390,7 @@ SUITE(File)
         for (size_t i = 0; i < 2; ++i)
         {
             auto blob_name = this->get_random_string();
-            auto container = test_config::instance().account().create_cloud_blob_client().get_container_reference(_XPLATSTR("container"));
+            auto container = test_config::instance().account().create_cloud_blob_client().get_container_reference(_XPLATSTR("container") + get_random_string());
             container.create_if_not_exists();
 
             auto source = container.get_block_blob_reference(blob_name);
@@ -235,12 +405,14 @@ SUITE(File)
             /// create dest files with specified sas credentials, only read access to dest read file and only write access to dest write file.
             auto dest_file_name = this->get_random_string();
             auto dest = m_directory.get_file_reference(dest_file_name);
-            
+
             /// try to copy from source blob to dest file, use dest_read_file to check copy stats.
             auto copy_id = dest.start_copy(source_blob, azure::storage::access_condition(), azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
             CHECK(wait_for_copy(dest));
             CHECK_THROW(dest.abort_copy(copy_id, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context), azure::storage::storage_exception);
             CHECK_EQUAL(web::http::status_codes::Conflict, m_context.request_results().back().http_status_code());
+
+            container.delete_container();
         }
     }
 
@@ -287,9 +459,11 @@ SUITE(File)
     {
         utility::string_t content = _XPLATSTR("content");
         m_file.create(content.length(), azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        CHECK(!m_file.properties().server_encrypted());
         m_file.upload_text(content, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         auto download_content = m_file.download_text(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         CHECK(content == download_content);
+        CHECK(m_file.properties().server_encrypted());
     }
 
     TEST_FIXTURE(file_test_base, file_upload_download_from_file)
@@ -363,7 +537,7 @@ SUITE(File)
         {
             auto range = ranges1.at(0);
             CHECK(range.start_offset() == 0);
-            CHECK((range.end_offset() - range.start_offset() + 1) == content.length());
+            CHECK(size_t(range.end_offset() - range.start_offset() + 1) == content.length());
         }
         m_file.clear_range(0, content.length());
         auto ranges_clear = m_file.list_ranges(0, 2048, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
@@ -373,7 +547,7 @@ SUITE(File)
         {
             auto range = ranges1.at(0);
             CHECK(range.start_offset() == 0);
-            CHECK((range.end_offset() - range.start_offset() + 1) == content.length());
+            CHECK(size_t(range.end_offset() - range.start_offset() + 1) == content.length());
         }
 
         // verify write range with total length larger than the content.
@@ -435,7 +609,7 @@ SUITE(File)
             policy.set_start(utility::datetime::utc_now() - utility::datetime::from_minutes(5));
             policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
 
-            auto file = m_share.get_root_directory_reference().get_file_reference(_XPLATSTR("file") + utility::conversions::print_string((int)i));
+            auto file = m_share.get_root_directory_reference().get_file_reference(_XPLATSTR("file") + azure::storage::core::convert_to_string((int)i));
             file.create_if_not_exists(512U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
             file.properties().set_cache_control(_XPLATSTR("no-transform"));
             file.properties().set_content_disposition(_XPLATSTR("attachment"));
@@ -472,6 +646,14 @@ SUITE(File)
             CHECK_UTF8_EQUAL(content[i], download_content);
             file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
             CHECK(!file.properties().content_md5().empty());
+
+            auto same_file = m_directory.get_file_reference(filename[i]);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> buff;
+            same_file.download_range_to_stream(buff.create_ostream(), 0, content[i].length() / 2);
+            std::vector<uint8_t>& data = buff.collection();
+            std::string download_partial_content(data.begin(), data.end());
+            CHECK_UTF8_EQUAL(content[i].substr(0, content[i].length() / 2), download_partial_content);
+            CHECK_UTF8_EQUAL(file.properties().content_md5(), same_file.properties().content_md5());
         }
     }
 
@@ -526,6 +708,102 @@ SUITE(File)
             CHECK(file.properties().size() == target_length);
             CHECK(download_buffer.collection().size() == target_length);
             CHECK(std::equal(data.begin(), data.end(), download_buffer.collection().begin()));
+        }
+    }
+
+    /// <summary>
+    /// Test parallel download wit offset
+    /// </summary>
+    TEST_FIXTURE(file_test_base, parallel_download_with_offset)
+    {
+        // file with size larger than 32MB.
+        // With offset not zero.
+        {
+            auto file_name = get_random_string(20);
+            auto file = m_directory.get_file_reference(file_name);
+            size_t target_length = 100 * 1024 * 1024;
+            azure::storage::file_request_options option;
+            option.set_parallelism_factor(2);
+            std::vector<uint8_t> data;
+            data.resize(target_length);
+            fill_buffer(data);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+            file.upload_from_stream(upload_buffer.create_istream(), azure::storage::file_access_condition(), option, m_context);
+
+            // download target file in parallel.
+            azure::storage::operation_context context;
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+
+            utility::size64_t actual_offset = get_random_int32() % 255 + 1;
+            utility::size64_t actual_length = target_length - actual_offset;
+            file.download_range_to_stream(download_buffer.create_ostream(), actual_offset, actual_length, azure::storage::file_access_condition(), option, context);
+
+            check_parallelism(context, 2);
+            CHECK(file.properties().size() == target_length);
+            CHECK(download_buffer.collection().size() == actual_length);
+            CHECK(std::equal(data.begin() + actual_offset, data.end(), download_buffer.collection().begin()));
+        }
+
+        // file with size larger than 32MB.
+        // With offset not zero, length = max.
+        {
+            auto file_name = get_random_string(20);
+            auto file = m_directory.get_file_reference(file_name);
+            size_t target_length = 100 * 1024 * 1024;
+            azure::storage::file_request_options option;
+            option.set_parallelism_factor(2);
+            std::vector<uint8_t> data;
+            data.resize(target_length);
+            fill_buffer(data);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+            file.upload_from_stream(upload_buffer.create_istream(), azure::storage::file_access_condition(), option, m_context);
+
+            // download target file in parallel.
+            azure::storage::operation_context context;
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+
+            utility::size64_t actual_offset = get_random_int32() % 255 + 1;
+            utility::size64_t actual_length = target_length - actual_offset;
+            file.download_range_to_stream(download_buffer.create_ostream(), actual_offset, std::numeric_limits<utility::size64_t>::max(), azure::storage::file_access_condition(), option, context);
+
+            check_parallelism(context, 2);
+            CHECK(file.properties().size() == target_length);
+            CHECK(download_buffer.collection().size() == actual_length);
+            CHECK(std::equal(data.begin() + actual_offset, data.end(), download_buffer.collection().begin()));
+        }
+    }
+
+    /// <summary>
+    /// Test parallel download wit length too large
+    /// </summary>
+    TEST_FIXTURE(file_test_base, parallel_download_with_length_too_large)
+    {
+        // file with size larger than 32MB.
+        // With offset not zero.
+        {
+            auto file_name = get_random_string(20);
+            auto file = m_directory.get_file_reference(file_name);
+            size_t target_length = 100 * 1024 * 1024;
+            azure::storage::file_request_options option;
+            option.set_parallelism_factor(10);
+            std::vector<uint8_t> data;
+            data.resize(target_length);
+            fill_buffer(data);
+            concurrency::streams::container_buffer<std::vector<uint8_t>> upload_buffer(data);
+            file.upload_from_stream(upload_buffer.create_istream(), azure::storage::file_access_condition(), option, m_context);
+
+            // download target file in parallel.
+            azure::storage::operation_context context;
+            concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+
+            utility::size64_t actual_offset = get_random_int32() % 255 + 1;
+            utility::size64_t actual_length = target_length - actual_offset;
+            file.download_range_to_stream(download_buffer.create_ostream(), actual_offset, actual_length * 2, azure::storage::file_access_condition(), option, context);
+
+            check_parallelism(context, 10);
+            CHECK(file.properties().size() == target_length);
+            CHECK(download_buffer.collection().size() == actual_length);
+            CHECK(std::equal(data.begin() + actual_offset, data.end(), download_buffer.collection().begin()));
         }
     }
 
@@ -601,5 +879,186 @@ SUITE(File)
 
         check_parallelism(context, 1);
         CHECK(file.properties().size() == target_length);
+    }
+
+    TEST_FIXTURE(file_test_base, file_lease)
+    {
+        m_file.create(1024);
+        CHECK(azure::storage::lease_status::unspecified == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::unspecified == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+        m_file.download_attributes();
+        CHECK(azure::storage::lease_status::unlocked == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::available == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+
+        // Acquire
+        utility::string_t lease_id = m_file.acquire_lease(utility::string_t());
+        CHECK(azure::storage::lease_status::unspecified == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::unspecified == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+        m_file.download_attributes();
+        CHECK(azure::storage::lease_status::locked == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::leased == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::infinite == m_file.properties().lease_duration());
+
+        // Change
+        utility::string_t lease_id2 = utility::uuid_to_string(utility::new_uuid());
+        azure::storage::file_access_condition condition;
+        condition.set_lease_id(lease_id);
+        lease_id = m_file.change_lease(lease_id2, condition);
+        utility::details::inplace_tolower(lease_id);
+        utility::details::inplace_tolower(lease_id2);
+        CHECK(lease_id == lease_id2);
+        CHECK(azure::storage::lease_status::unspecified == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::unspecified == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+
+        // Break
+        m_file.break_lease();
+        CHECK(azure::storage::lease_status::unspecified == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::unspecified == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+        m_file.download_attributes();
+        CHECK(azure::storage::lease_status::unlocked == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::broken == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+
+        lease_id = m_file.acquire_lease(utility::string_t());
+        condition.set_lease_id(lease_id);
+        m_file.break_lease(condition, azure::storage::file_request_options(), m_context);
+
+        // Acquire with proposed lease id
+        lease_id2 = utility::uuid_to_string(utility::new_uuid());
+        lease_id = m_file.acquire_lease(lease_id2);
+        utility::details::inplace_tolower(lease_id);
+        utility::details::inplace_tolower(lease_id2);
+        CHECK(lease_id == lease_id2);
+
+        // Release
+        CHECK_THROW(m_file.release_lease(condition), azure::storage::storage_exception);
+        condition.set_lease_id(lease_id);
+        m_file.release_lease(condition);
+        CHECK(azure::storage::lease_status::unspecified == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::unspecified == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+        m_file.download_attributes();
+        CHECK(azure::storage::lease_status::unlocked == m_file.properties().lease_status());
+        CHECK(azure::storage::lease_state::available == m_file.properties().lease_state());
+        CHECK(azure::storage::lease_duration::unspecified == m_file.properties().lease_duration());
+    }
+
+    TEST_FIXTURE(file_test_base, file_operations_with_lease)
+    {
+        m_file.create(1024);
+        utility::string_t lease_id = m_file.acquire_lease(utility::string_t());
+
+        azure::storage::file_access_condition lease_condition;
+        lease_condition.set_lease_id(lease_id);
+        azure::storage::file_access_condition wrong_condition;
+        wrong_condition.set_lease_id(utility::uuid_to_string(utility::new_uuid()));
+        azure::storage::file_access_condition empty_condition;
+
+        std::vector<azure::storage::file_access_condition> conditions =
+        {
+            empty_condition, wrong_condition, lease_condition
+        };
+
+        utility::string_t upload_content = _XPLATSTR("content");
+        concurrency::streams::container_buffer<std::vector<uint8_t>> download_buffer;
+        auto copy_src = m_directory.get_file_reference(_XPLATSTR("copy_src"));
+        copy_src.create(1024);
+        copy_src.upload_text(upload_content);
+        utility::string_t copy_id;
+        std::vector<std::function<void(azure::storage::file_access_condition)>> funcs =
+        {
+            // Create
+            [&](azure::storage::file_access_condition condition) { m_file.create(2048, condition, azure::storage::file_request_options(), m_context); },
+            // Create if not exists
+            [&](azure::storage::file_access_condition condition) { m_file.create_if_not_exists(2048, condition, azure::storage::file_request_options(), m_context); },
+            // Download attributes
+            [&](azure::storage::file_access_condition condition) { m_file.download_attributes(condition, azure::storage::file_request_options(), m_context); },
+            // Exist
+            [&](azure::storage::file_access_condition condition) { m_file.exists(condition, azure::storage::file_request_options(), m_context); },
+            // Upload properties
+            [&](azure::storage::file_access_condition condition) { m_file.upload_properties(condition, azure::storage::file_request_options(), m_context); },
+            // Upload metadata
+            [&](azure::storage::file_access_condition condition) { m_file.upload_metadata(condition, azure::storage::file_request_options(), m_context); },
+            // Resize
+            [&](azure::storage::file_access_condition condition) { m_file.resize(4096, condition, azure::storage::file_request_options(), m_context); },
+            // Upload from stream
+            [&](azure::storage::file_access_condition condition) { m_file.upload_from_stream(concurrency::streams::bytestream::open_istream(utility::conversions::to_utf8string(upload_content)), condition, azure::storage::file_request_options(), m_context); },
+            // Write range
+            [&](azure::storage::file_access_condition condition) { m_file.write_range(concurrency::streams::bytestream::open_istream(utility::conversions::to_utf8string(upload_content)), 0, utility::string_t(), condition, azure::storage::file_request_options(), m_context); },
+            // List ranges
+            [&](azure::storage::file_access_condition condition) { m_file.list_ranges(0, 4096, condition, azure::storage::file_request_options(), m_context); },
+            // Download range
+            [&](azure::storage::file_access_condition condition) { m_file.download_to_stream(download_buffer.create_ostream(), condition, azure::storage::file_request_options(), m_context); },
+            // Clear range
+            [&](azure::storage::file_access_condition condition) { m_file.clear_range(0, 1, condition, azure::storage::file_request_options(), m_context); },
+            // Start copy
+            [&](azure::storage::file_access_condition condition)
+            {
+                auto id = m_file.start_copy(copy_src.uri().primary_uri(), azure::storage::access_condition(), condition, azure::storage::file_request_options(), m_context);
+                copy_id = id.empty() ? copy_id : id;
+            },
+            // Abort copy
+            [&](azure::storage::file_access_condition condition) { m_file.abort_copy(copy_id, condition, azure::storage::file_request_options(), m_context); },
+            // Delete if exists
+            [&](azure::storage::file_access_condition condition) { m_file.delete_file_if_exists(condition, azure::storage::file_request_options(), m_context); },
+        };
+
+        std::vector<std::vector<bool>> expected_results =
+        {
+            // Create
+            {0, 0, 1},
+            // Create if not exists
+            {0, 0, 1},
+            // Download Attributes
+            {1, 0, 1},
+            // Exist
+            {1, 0, 1},
+            // Upload properties
+            {0, 0, 1},
+            // Upload metadata
+            {0, 0, 1},
+            // Resize
+            {0, 0, 1},
+            // Upload from stream
+            {0, 0, 1},
+            // Write range
+            {0, 0, 1},
+            // List ranges
+            {1, 0, 1},
+            // Download range
+            {1, 0, 1},
+            // Clear range
+            {0, 0, 1},
+            // Start copy
+            {0, 0, 1},
+            // Abort copy
+            {0, 0, 1},
+            // Delete if exists
+            {0, 0, 1},
+        };
+        CHECK_EQUAL(funcs.size(), expected_results.size());
+
+        for (int i = 0; i < funcs.size(); ++i)
+        {
+            for (int j = 0; j < conditions.size(); ++j)
+            {
+                try
+                {
+                    funcs[i](conditions[j]);
+                }
+                catch (azure::storage::storage_exception& e)
+                {
+                    if (expected_results[i][j] == true && e.result().http_status_code() == web::http::status_codes::PreconditionFailed)
+                    {
+                        throw;
+                    }
+                }
+            }
+        }
     }
 }

@@ -20,6 +20,9 @@
 #include "limits"
 #include "service_client.h"
 
+#pragma push_macro("max")
+#undef max
+
 namespace azure { namespace storage {
 
     class cloud_file;
@@ -48,19 +51,83 @@ namespace azure { namespace storage {
     class file_access_condition
     {
     public:
+        /// <summary>
+        /// Constructs an empty file access condition.
+        /// </summary>
         file_access_condition()
-            : m_valid(false)
         {
         }
 
+#if defined(_MSC_VER) && _MSC_VER < 1900
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // have implicitly-declared move constructor and move assignment operator.
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="file_access_condition" /> class based on an existing instance.
+        /// </summary>
+        /// <param name="other">An existing <see cref="file_access_condition" /> object.</param>
+        file_access_condition(file_access_condition&& other)
+        {
+            *this = std::move(other);
+        }
+
+        /// <summary>
+        /// Returns a reference to an <see cref="file_access_condition" /> object.
+        /// </summary>
+        /// <param name="other">An existing <see cref="file_access_condition" /> object to use to set properties.</param>
+        /// <returns>An <see cref="file_access_condition" /> object with properties set.</returns>
+        file_access_condition& operator=(file_access_condition&& other)
+        {
+            if (this != &other)
+            {
+                m_lease_id = std::move(other.m_lease_id);
+            }
+            return *this;
+        }
+#endif
+
+        /// <summary>
+        /// Generates a file access condition such that an operation will be performed only if the lease ID on the
+        /// resource matches the specified lease ID.
+        /// </summary>
+        /// <param name="lease_id">The lease ID that must match the lease ID of the resource.</param>
+        /// <returns>An <see cref="azure::storage::file_access_condition" /> object that represents the lease condition.</returns>
+        static file_access_condition generate_lease_condition(utility::string_t lease_id)
+        {
+            file_access_condition condition;
+            condition.set_lease_id(std::move(lease_id));
+            return condition;
+        }
+
+        /// <summary>
+        /// Returns if this condition is empty.
+        /// </summary>
+        /// <returns><c>true</c> if this condition is empty, <c>false</c> otherwise.</returns>
         bool is_valid() const
         {
-            return m_valid;
+            return !m_lease_id.empty();
+        }
+
+        /// <summary>
+        /// Gets a lease ID that must match the lease on a resource.
+        /// </summary>
+        /// <returns>A string containing the lease ID.</returns>
+        const utility::string_t& lease_id() const
+        {
+            return m_lease_id;
+        }
+
+        /// <summary>
+        /// Sets a lease ID that must match the lease on a resource.
+        /// </summary>
+        /// <param name="value">A string containing the lease ID.</param>
+        void set_lease_id(utility::string_t value)
+        {
+            m_lease_id = std::move(value);
         }
 
     private:
-
-        bool m_valid;
+        utility::string_t m_lease_id;
     };
 
     /// <summary>
@@ -339,7 +406,6 @@ namespace azure { namespace storage {
         /// Initializes a new instance of the <see cref="azure::storage::cloud_file_share_properties" /> class.
         /// </summary>
         cloud_file_share_properties()
-            : m_quota(0)
         {
         }
 
@@ -359,6 +425,10 @@ namespace azure { namespace storage {
                 m_quota = other.m_quota;
                 m_etag = std::move(other.m_etag);
                 m_last_modified = std::move(other.m_last_modified);
+                m_next_allowed_quota_downgrade_time = std::move(other.m_next_allowed_quota_downgrade_time);
+                m_provisioned_iops = std::move(other.m_provisioned_iops);
+                m_provisioned_ingress = std::move(other.m_provisioned_ingress);
+                m_provisioned_egress = std::move(other.m_provisioned_egress);
             }
             return *this;
         }
@@ -401,11 +471,47 @@ namespace azure { namespace storage {
             return m_last_modified;
         }
 
+        /// <summary>
+        /// Gets the next allowed quota downgrade time for the share, expressed as a UTC value.
+        /// </summary>
+        /// <returns>The share's last-modified time, in UTC format.</returns>
+        utility::datetime next_allowed_quota_downgrade_time() const {
+            return m_next_allowed_quota_downgrade_time;
+        }
+
+        /// <summary>
+        /// Gets the provisioned IOPS for the share.
+        /// </summary>
+        /// <returns>Allowed IOPS for this share.</returns>
+        utility::size64_t provisioned_iops() const {
+            return m_provisioned_iops;
+        }
+
+        /// <summary>
+        /// Gets the allowed network ingress rate for the share.
+        /// </summary>
+        /// <returns>Allowed network ingress rate for the share, in MiB/s.</returns>
+        utility::size64_t provisioned_ingress() const {
+            return m_provisioned_ingress;
+        }
+
+        /// <summary>
+        /// Gets the allowed network egress rate for the share.
+        /// </summary>
+        /// <returns>Allowed network egress rate for the share, in MiB/s.</returns>
+        utility::size64_t provisioned_egress() const {
+            return m_provisioned_egress;
+        }
+
     private:
 
-        utility::size64_t m_quota;
+        utility::size64_t m_quota{ 0 };
         utility::string_t m_etag;
         utility::datetime m_last_modified;
+        utility::datetime m_next_allowed_quota_downgrade_time;
+        utility::size64_t m_provisioned_iops{ 0 };
+        utility::size64_t m_provisioned_ingress{ 0 };
+        utility::size64_t m_provisioned_egress{ 0 };
 
         void update_etag_and_last_modified(const cloud_file_share_properties& other);
 
@@ -832,7 +938,8 @@ namespace azure { namespace storage {
         void initialize()
         {
             set_authentication_scheme(azure::storage::authentication_scheme::shared_key);
-            m_default_request_options.set_retry_policy(exponential_retry_policy());
+            if (!m_default_request_options.retry_policy().is_valid())
+                m_default_request_options.set_retry_policy(exponential_retry_policy());
         }
 
         file_request_options m_default_request_options;
@@ -1254,6 +1361,7 @@ namespace azure { namespace storage {
         /// Retrieves the share's statistics.
         /// </summary>
         /// <returns>The size number in gigabyte of used data for this share.</returns>
+        /// <remarks>This method is deprecated in favor of download_shared_usage_in_bytes.</remarks>
         int32_t download_share_usage() const
         {
             return download_share_usage_async().get();
@@ -1266,18 +1374,20 @@ namespace azure { namespace storage {
         /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
         /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
         /// <returns>The size number in gigabyte of used data for this share.</returns>
+        /// <remarks>This method is deprecated in favor of download_shared_usage_in_bytes.</remarks>
         int32_t download_share_usage(const file_access_condition& condition, const file_request_options& options, operation_context context) const
         {
-            return download_share_usage_aysnc(condition, options, context).get();
+            return download_share_usage_async(condition, options, context).get();
         }
 
         /// <summary>
         /// Intitiates an asynchronous operation to retrieve the share's statistics.
         /// </summary>
         /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        /// <remarks>This method is deprecated in favor of download_shared_usage_in_bytes_async.</remarks>
         pplx::task<int32_t> download_share_usage_async() const
         {
-            return download_share_usage_aysnc(file_access_condition(), file_request_options(), operation_context());
+            return download_share_usage_async(file_access_condition(), file_request_options(), operation_context());
         }
 
         /// <summary>
@@ -1287,7 +1397,47 @@ namespace azure { namespace storage {
         /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
         /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
         /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
-        WASTORAGE_API pplx::task<int32_t> download_share_usage_aysnc(const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+        /// <remarks>This method is deprecated in favor of download_shared_usage_in_bytes_async.</remarks>
+        WASTORAGE_API pplx::task<int32_t> download_share_usage_async(const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+
+        /// <summary>
+        /// Retrieves the share's statistics.
+        /// </summary>
+        /// <returns>The size number in byte of used data for this share.</returns>
+        int64_t download_share_usage_in_bytes() const
+        {
+            return download_share_usage_in_bytes_async().get();
+        }
+
+        /// <summary>
+        /// Retrieves the share's statistics.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>The size number in byte of used data for this share.</returns>
+        int64_t download_share_usage_in_bytes(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return download_share_usage_in_bytes_async(condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to retrieve the share's statistics.
+        /// </summary>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        pplx::task<int64_t> download_share_usage_in_bytes_async() const
+        {
+            return download_share_usage_in_bytes_async(file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to retrieve the share's statistics.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<int64_t> download_share_usage_in_bytes_async(const file_access_condition& condition, const file_request_options& options, operation_context context) const;
 
         /// <summary>
         /// Gets permissions settings for the share.
@@ -1368,6 +1518,92 @@ namespace azure { namespace storage {
         /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
         /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
         WASTORAGE_API pplx::task<void> upload_permissions_async(const file_share_permissions& permissions, const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+
+        /// <summary>
+        /// Gets the Security Descriptor Definition Language (SDDL) for a given security descriptor.
+        /// </summary>
+        /// <param name="permission_key">Security descriptor of the permission.</param>
+        /// <returns>A <see cref="utility::string_t" /> object that contains permission in the Security Descriptor Definition Language (SDDL).</returns>
+        utility::string_t download_file_permission(const utility::string_t& permission_key) const
+        {
+            return download_file_permission_async(permission_key).get();
+        }
+
+        /// <summary>
+        /// Gets the Security Descriptor Definition Language (SDDL) for a given security descriptor.
+        /// </summary>
+        /// <param name="permission_key">Security descriptor of the permission.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="utility::string_t" /> object that contains permission in the Security Descriptor Definition Language (SDDL).</returns>
+        utility::string_t download_file_permission(const utility::string_t& permission_key, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return download_file_permission_async(permission_key, condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to get the Security Descriptor Definition Language (SDDL) for a given security descriptor.
+        /// </summary>
+        /// <param name="permission_key">Security descriptor of the permission.</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        pplx::task<utility::string_t> download_file_permission_async(const utility::string_t& permission_key) const
+        {
+            return download_file_permission_async(permission_key, file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to get the Security Descriptor Definition Language (SDDL) for a given security descriptor.
+        /// </summary>
+        /// <param name="permission_key">Security descriptor of the permission.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<utility::string_t> download_file_permission_async(const utility::string_t& permission_key, const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+
+        /// <summary>
+        /// Creates a permission in the share. The created security descriptor can be used for the files/directories in this share.
+        /// </summary>
+        /// <param name="permission">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        /// <returns>A <see cref="utility::string_t" /> that contains security descriptor of the permission.</returns>
+        utility::string_t upload_file_permission(const utility::string_t& permission) const
+        {
+            return upload_file_permission_async(permission).get();
+        }
+
+        /// <summary>
+        /// Creates a permission in the share. The created security descriptor can be used for the files/directories in this share.
+        /// </summary>
+        /// <param name="permission">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="utility::string_t" /> that contains security descriptor of the permission.</returns>
+        utility::string_t upload_file_permission(const utility::string_t& permission, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return upload_file_permission_async(permission, condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to creates a permission in the share. The created security descriptor can be used for the files/directories in this share.
+        /// </summary>
+        /// <param name="permission">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        pplx::task<utility::string_t> upload_file_permission_async(const utility::string_t& permission) const
+        {
+            return upload_file_permission_async(permission, file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to creates a permission in the share. The created security descriptor can be used for the files/directories in this share.
+        /// </summary>
+        /// <param name="permission">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<utility::string_t> upload_file_permission_async(const utility::string_t& permission, const file_access_condition& condition, const file_request_options& options, operation_context context) const;
 
         /// <summary>
         /// Resize the share.
@@ -1545,11 +1781,46 @@ namespace azure { namespace storage {
     typedef result_segment<list_file_and_directory_item> list_file_and_directory_result_segment;
     typedef result_iterator<list_file_and_directory_item> list_file_and_diretory_result_iterator;
     
-    class list_file_and_directory_item;
+    /// <summary>
+    /// Valid set of file attributes.
+    /// </summary>
+    enum cloud_file_attributes : uint64_t
+    {
+        preserve = 0x0,
+        source = 0x1,
+        none = 0x2,
+        readonly = 0x4,
+        hidden = 0x8,
+        system = 0x10,
+        directory = 0x20,
+        archive = 0x40,
+        temporary = 0x80,
+        offline = 0x100,
+        not_content_indexed = 0x200,
+        no_scrub_data = 0x400,
+    };
+
+    inline cloud_file_attributes operator|(cloud_file_attributes lhs, cloud_file_attributes rhs)
+    {
+        return static_cast<cloud_file_attributes>(static_cast<uint64_t>(lhs) | static_cast<uint64_t>(rhs));
+    }
+
+    inline cloud_file_attributes& operator|=(cloud_file_attributes& lhs, cloud_file_attributes rhs)
+    {
+        return lhs = lhs | rhs;
+    }
 
     class cloud_file_directory_properties
     {
     public:
+
+        struct now_t {};
+        struct inherit_t {};
+        struct preserve_t {};
+        static constexpr now_t now{};
+        static constexpr inherit_t inherit{};
+        static constexpr preserve_t preserve{};
+
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::cloud_file_directory_properties" /> class.
         /// </summary>
@@ -1572,6 +1843,19 @@ namespace azure { namespace storage {
             {
                 m_etag = std::move(other.m_etag);
                 m_last_modified = std::move(other.m_last_modified);
+                m_server_encrypted = std::move(other.m_server_encrypted);
+                m_permission = std::move(other.m_permission);
+                m_permission_key = std::move(other.m_permission_key);
+                m_attributes = std::move(other.m_attributes);
+                m_creation_time = std::move(other.m_creation_time);
+                m_creation_time_now = std::move(other.m_creation_time_now);
+                m_creation_time_preserve = std::move(other.m_creation_time_preserve);
+                m_last_write_time = std::move(other.m_last_write_time);
+                m_last_write_time_now = std::move(other.m_last_write_time_now);
+                m_last_write_time_preserve = std::move(other.m_last_write_time_preserve);
+                m_change_time = std::move(other.m_change_time);
+                m_file_id = std::move(other.m_file_id);
+                m_parent_id = std::move(other.m_parent_id);
             }
             return *this;
         }
@@ -1596,13 +1880,232 @@ namespace azure { namespace storage {
             return m_last_modified;
         }
 
+        /// <summary>
+        /// Gets if the server is encrypted.
+        /// </summary>
+        /// <returns><c>true</c> if a server is encrypted.</returns>
+        bool server_encrypted()
+        {
+            return m_server_encrypted;
+        }
+
+        /// <summary>
+        /// Sets if the server is encrypted.
+        /// </summary>
+        /// <param name="value">If the server is encrypted.</param>
+        void set_server_encrypted(bool value)
+        {
+            m_server_encrypted = value;
+        }
+
+        /// <summary>
+        /// Gets the permission property.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> object that contains permission in the Security Descriptor Definition Language(SDDL).</returns>
+        const utility::string_t& permission() const
+        {
+            return m_permission;
+        }
+
+        /// <summary>
+        /// Sets the permission property.
+        /// </summary>
+        /// <param name="value">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        void set_permission(utility::string_t value)
+        {
+            m_permission = std::move(value);
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Sets the permission property value to inherit, which means to inherit from the parent directory.
+        /// </summary>
+        /// <param name="value">Explicitly specified permission value, must be <see cref="azure::storage::cloud_file_directory_properties::inherit" />.</param>
+        void set_permission(inherit_t)
+        {
+            m_permission = protocol::header_value_file_permission_inherit;
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Sets the permission property value to preserve, which means to keep existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified permission value, must be <see cref="azure::storage::cloud_file_directory_properties::preserve" />.</param>
+        void set_permission(preserve_t)
+        {
+            m_permission = protocol::header_value_file_property_preserve;
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Gets security descriptor of the permission.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> that contains security descriptor of the permission.</returns>
+        const utility::string_t& permission_key() const
+        {
+            return m_permission_key;
+        }
+
+        /// <summary>
+        /// Sets security descriptor of permission.
+        /// </summary>
+        /// <param name="value">A <see cref="utility::string_t" /> that contains security descriptor of the permission.</param>
+        void set_permission_key(utility::string_t value)
+        {
+            m_permission.clear();
+            m_permission_key = std::move(value);
+        }
+
+        /// <summary>
+        /// Gets file system attributes set on this directory.
+        /// </summary>
+        /// <returns>An <see cref="azure::storage::cloud_file_attributes" /> that represents a set of attributes.</returns>
+        cloud_file_attributes attributes() const
+        {
+            return m_attributes;
+        }
+
+        /// <summary>
+        /// Sets file system attributes on this directory.
+        /// </summary>
+        /// <param name="value">An <see cref="azure::storage::cloud_file_attributes" /> that represents a set of attributes.</param>
+        void set_attributes(cloud_file_attributes value)
+        {
+            m_attributes = value;
+        }
+
+        /// <summary>
+        /// Gets the creation time property for this directory.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime creation_time() const
+        {
+            return m_creation_time;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this directory.
+        /// </summary>
+        /// <param name="value">An ISO 8601 datetime <see cref="utility::string_t" />.</param>
+        void set_creation_time(utility::datetime value)
+        {
+            m_creation_time = std::move(value);
+            m_creation_time_now = false;
+            m_creation_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this directory to now, which indicates the time of the request.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_directory_properties::now" />.</param>
+        void set_creation_time(now_t)
+        {
+            m_creation_time = utility::datetime();
+            m_creation_time_now = true;
+            m_creation_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this directory to preserve, which means to keep the existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_directory_properties::preserve" />.</param>
+        void set_creation_time(preserve_t)
+        {
+            m_creation_time = utility::datetime();
+            m_creation_time_now = false;
+            m_creation_time_preserve = true;
+        }
+
+        /// <summary>
+        /// Gets the last write time property for this directory.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime last_write_time() const
+        {
+            return m_last_write_time;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this directory.
+        /// </summary>
+        /// <param name="value">An ISO 8601 datetime <see cref="utility::string_t" />.</param>
+        void set_last_write_time(utility::datetime value)
+        {
+            m_last_write_time = std::move(value);
+            m_last_write_time_now = false;
+            m_last_write_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this directory to now, which indicates the time of the request.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_directory_properties::now" />.</param>
+        void set_last_write_time(now_t)
+        {
+            m_last_write_time = utility::datetime();
+            m_last_write_time_now = true;
+            m_last_write_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this directory to preserve, which means to keep the existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_directory_properties::preserve" />.</param>
+        void set_last_write_time(preserve_t)
+        {
+            m_last_write_time = utility::datetime();
+            m_last_write_time_now = false;
+            m_last_write_time_preserve = true;
+        }
+
+        /// <summary>
+        /// Gets the change time property for this directory.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime chang_time() const
+        {
+            return m_change_time;
+        }
+
+        /// <summary>
+        /// Gets the file id property for this directory.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> contains the file id.</returns>
+        const utility::string_t& file_id() const
+        {
+            return m_file_id;
+        }
+
+        /// <summary>
+        /// Gets the parent file id property for this directory.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> contains the parent file id.</returns>
+        const utility::string_t& file_parent_id() const
+        {
+            return m_parent_id;
+        }
+
     private:
 
         utility::string_t m_etag;
         utility::datetime m_last_modified;
 
+        bool m_server_encrypted{ false };
+
+        utility::string_t m_permission;
+        utility::string_t m_permission_key;
+        cloud_file_attributes m_attributes{ cloud_file_attributes::preserve };
+        utility::datetime m_creation_time;
+        bool m_creation_time_now{ false };
+        bool m_creation_time_preserve{ true };
+        utility::datetime m_last_write_time;
+        bool m_last_write_time_now{ false };
+        bool m_last_write_time_preserve{ true };
+        utility::datetime m_change_time;
+        utility::string_t m_file_id;
+        utility::string_t m_parent_id;
+
         void update_etag_and_last_modified(const cloud_file_directory_properties& other);
-        void update_etag(const cloud_file_directory_properties& other);
 
         friend class cloud_file_directory;
         friend class protocol::file_response_parsers;
@@ -1703,14 +2206,36 @@ namespace azure { namespace storage {
         /// <summary>
         /// Returns an <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items.
         /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <returns>An <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
+        list_file_and_diretory_result_iterator list_files_and_directories(const utility::string_t& prefix) const
+        {
+            return list_files_and_directories(prefix, 0);
+        }
+
+        /// <summary>
+        /// Returns an <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
         /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
         /// If this value is zero, the maximum possible number of results will be returned.</param>
         /// <returns>An <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
         list_file_and_diretory_result_iterator list_files_and_directories(int64_t max_results) const
         {
-            return list_files_and_directories(max_results, file_request_options(), operation_context());
+            return list_files_and_directories(utility::string_t(), max_results);
         }
-        
+
+        /// <summary>
+        /// Returns an <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
+        /// If this value is zero, the maximum possible number of results will be returned.</param>
+        /// <returns>An <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
+        list_file_and_diretory_result_iterator list_files_and_directories(const utility::string_t& prefix, int64_t max_results) const
+        {
+            return list_files_and_directories(prefix, max_results, file_request_options(), operation_context());
+        }
+
         /// <summary>
         /// Returns an <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items.
         /// </summary>
@@ -1719,7 +2244,21 @@ namespace azure { namespace storage {
         /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
         /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
         /// <returns>An <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
-        WASTORAGE_API list_file_and_diretory_result_iterator list_files_and_directories(int64_t max_results, const file_request_options& options, operation_context context) const;
+        list_file_and_diretory_result_iterator list_files_and_directories(int64_t max_results, const file_request_options& options, operation_context context) const
+        {
+            return list_files_and_directories(utility::string_t(), max_results, options, context);
+        }
+        
+        /// <summary>
+        /// Returns an <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
+        /// If this value is zero, the maximum possible number of results will be returned.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>An <see cref="azure::storage::list_file_and_diretory_result_iterator" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
+        WASTORAGE_API list_file_and_diretory_result_iterator list_files_and_directories(const utility::string_t& prefix, int64_t max_results, const file_request_options& options, operation_context context) const;
         
         /// <summary>
         /// Returns a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
@@ -1729,6 +2268,17 @@ namespace azure { namespace storage {
         list_file_and_directory_result_segment list_files_and_directories_segmented(const continuation_token& token) const
         {
             return list_files_and_directories_segmented_async(token).get();
+        }
+
+        /// <summary>
+        /// Returns a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="token">A continuation token returned by a previous listing operation.</param>
+        /// <returns>An <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
+        list_file_and_directory_result_segment list_files_and_directories_segmented(const utility::string_t& prefix, const continuation_token& token) const
+        {
+            return list_files_and_directories_segmented_async(prefix, token).get();
         }
 
         /// <summary>
@@ -1745,6 +2295,20 @@ namespace azure { namespace storage {
         }
 
         /// <summary>
+        /// Returns a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
+        /// <param name="token">A continuation token returned by a previous listing operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>An <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items in the the directory.</returns>
+        list_file_and_directory_result_segment list_files_and_directories_segmented(const utility::string_t& prefix, int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const
+        {
+            return list_files_and_directories_segmented_async(prefix, max_results, token, options, context).get();
+        }
+
+        /// <summary>
         /// Intitiates an asynchronous operation to return a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
         /// </summary>
         /// <param name="token">A continuation token returned by a previous listing operation.</param>
@@ -1757,12 +2321,37 @@ namespace azure { namespace storage {
         /// <summary>
         /// Intitiates an asynchronous operation to return a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
         /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="token">A continuation token returned by a previous listing operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="azure::storage::list_file_and_directory_result_segment" /> that represents the current operation.</returns>
+        pplx::task<list_file_and_directory_result_segment> list_files_and_directories_segmented_async(const utility::string_t& prefix, const continuation_token& token) const
+        {
+            return list_files_and_directories_segmented_async(prefix, 0, token, file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to return a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
         /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
         /// <param name="token">A continuation token returned by a previous listing operation.</param>
         /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
         /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
         /// <returns>A <see cref="pplx::task" /> object of type <see cref="azure::storage::list_file_and_directory_result_segment" /> that represents the current operation.</returns>
-        WASTORAGE_API pplx::task<list_file_and_directory_result_segment> list_files_and_directories_segmented_async(int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const;
+        pplx::task<list_file_and_directory_result_segment> list_files_and_directories_segmented_async(int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const
+        {
+            return list_files_and_directories_segmented_async(utility::string_t(), max_results, token, options, context);
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to return a result segment <see cref="azure::storage::list_file_and_directory_result_segment" /> that can be used to to lazily enumerate a collection of file or directory items.
+        /// </summary>
+        /// <param name="prefix">The file/directory name prefix.</param>
+        /// <param name="max_results">A non-negative integer value that indicates the maximum number of results to be returned.
+        /// <param name="token">A continuation token returned by a previous listing operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="azure::storage::list_file_and_directory_result_segment" /> that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<list_file_and_directory_result_segment> list_files_and_directories_segmented_async(const utility::string_t& prefix, int64_t max_results, const continuation_token& token, const file_request_options& options, operation_context context) const;
 
         /// <summary>
         /// Creates the directory.
@@ -2012,6 +2601,43 @@ namespace azure { namespace storage {
         WASTORAGE_API pplx::task<void> download_attributes_async(const file_access_condition& condition, const file_request_options& options, operation_context context);
 
         /// <summary>
+        /// Updates the directory's properties.
+        /// </summary>
+        void upload_properties() const
+        {
+            upload_properties_async().wait();
+        }
+
+        /// <summary>
+        /// Updates the directory's properties.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        void upload_properties(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            upload_properties_async(condition, options, context).wait();
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to update the directory's properties.
+        /// </summary>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        pplx::task<void> upload_properties_async() const
+        {
+            return upload_properties_async(file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Intitiates an asynchronous operation to update the directory's properties.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<void> upload_properties_async(const file_access_condition& condition, const file_request_options& options, operation_context context) const;
+
+        /// <summary>
         /// Uploads the directory's metadata.
         /// </summary>
         void upload_metadata() const
@@ -2164,11 +2790,21 @@ namespace azure { namespace storage {
     {
     public:
 
+        struct now_t {};
+        struct inherit_t {};
+        struct preserve_t {};
+        struct source_t {};
+        static constexpr now_t now{};
+        static constexpr inherit_t inherit{};
+        static constexpr preserve_t preserve{};
+        static constexpr source_t source{};
+
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::cloud_file_properties" /> class.
         /// </summary>
         cloud_file_properties()
-            : m_length(0)
+            : m_lease_status(azure::storage::lease_status::unspecified), m_lease_state(azure::storage::lease_state::unspecified),
+            m_lease_duration(azure::storage::lease_duration::unspecified)
         {
         }
 
@@ -2196,6 +2832,23 @@ namespace azure { namespace storage {
                 m_cache_control = std::move(other.m_cache_control);
                 m_content_md5 = std::move(other.m_content_md5);
                 m_content_disposition = std::move(other.m_content_disposition);
+                m_server_encrypted = std::move(other.m_server_encrypted);
+
+                m_permission = std::move(other.m_permission);
+                m_permission_key = std::move(other.m_permission_key);
+                m_attributes = std::move(other.m_attributes);
+                m_creation_time = std::move(other.m_creation_time);
+                m_creation_time_now = std::move(other.m_creation_time_now);
+                m_creation_time_preserve = std::move(other.m_creation_time_preserve);
+                m_last_write_time = std::move(other.m_last_write_time);
+                m_last_write_time_now = std::move(other.m_last_write_time_now);
+                m_last_write_time_preserve = std::move(other.m_last_write_time_preserve);
+                m_change_time = std::move(other.m_change_time);
+                m_file_id = std::move(other.m_file_id);
+                m_parent_id = std::move(other.m_parent_id);
+                m_lease_status = std::move(other.m_lease_status);
+                m_lease_state = std::move(other.m_lease_state);
+                m_lease_duration = std::move(other.m_lease_duration);
             }
             return *this;
         }
@@ -2355,9 +3008,254 @@ namespace azure { namespace storage {
             m_content_disposition = std::move(value);
         }
 
+        /// <summary>
+        /// Gets if the server is encrypted.
+        /// </summary>
+        /// <returns><c>true</c> if a server is encrypted.</returns>
+        bool server_encrypted() const
+        {
+            return m_server_encrypted;
+        }
+
+        /// <summary>
+        /// Sets if the server is encrypted.
+        /// </summary>
+        /// <param name="value">If the server is encrypted.</param>
+        void set_server_encrypted(bool value)
+        {
+            m_server_encrypted = value;
+        }
+
+        /// <summary>
+        /// Gets the permission property.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> object that contains permission in the Security Descriptor Definition Language(SDDL).</returns>
+        const utility::string_t& permission() const
+        {
+            return m_permission;
+        }
+
+        /// <summary>
+        /// Sets the permission property.
+        /// </summary>
+        /// <param name="value">A <see cref="utility::string_t" /> that contains permission in the Security Descriptor Definition Language (SDDL).</param>
+        void set_permission(utility::string_t value)
+        {
+            m_permission = std::move(value);
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Sets the permission property value to inherit, which means to inherit from the parent directory.
+        /// </summary>
+        /// <param name="value">Explicitly specified permission value, must be <see cref="azure::storage::cloud_file_properties::inherit" />.</param>
+        void set_permission(inherit_t)
+        {
+            m_permission = protocol::header_value_file_permission_inherit;
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Sets the permission property value to preserve, which means to keep existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified permission value, must be <see cref="azure::storage::cloud_file_properties::preserve" />.</param>
+        void set_permission(preserve_t)
+        {
+            m_permission = protocol::header_value_file_property_preserve;
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Sets the permission property value to source, which means security descriptor shall be set for the target file by copying from the source file.
+        /// </summary>
+        /// <param name="value">Explicitly specified permission value, must be <see cref="azure::storage::cloud_file_properties::source" />.</param>
+        /// <remarks>
+        /// This only applies to copy operation.
+        /// </remarks>
+        void set_permission(source_t)
+        {
+            m_permission = protocol::header_value_file_property_source;
+            m_permission_key.clear();
+        }
+
+        /// <summary>
+        /// Gets security descriptor of the permission.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> that contains security descriptor of the permission.</returns>
+        const utility::string_t& permission_key() const
+        {
+            return m_permission_key;
+        }
+
+        /// <summary>
+        /// Sets security descriptor of permission.
+        /// </summary>
+        /// <param name="value">A <see cref="utility::string_t" /> that contains security descriptor of the permission.</param>
+        void set_permission_key(utility::string_t value)
+        {
+            m_permission.clear();
+            m_permission_key = std::move(value);
+        }
+
+        /// <summary>
+        /// Gets file system attributes set on this file.
+        /// </summary>
+        /// <returns>An <see cref="azure::storage::cloud_file_attributes" /> that represents a set of attributes.</returns>
+        cloud_file_attributes attributes() const
+        {
+            return m_attributes;
+        }
+
+        /// <summary>
+        /// Sets file system attributes on this file.
+        /// </summary>
+        /// <param name="value">An <see cref="azure::storage::cloud_file_attributes" /> that represents a set of attributes.</param>
+        void set_attributes(cloud_file_attributes value)
+        {
+            m_attributes = value;
+        }
+
+        /// <summary>
+        /// Gets the creation time property for this file.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime creation_time() const
+        {
+            return m_creation_time;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this file.
+        /// </summary>
+        /// <param name="value">An ISO 8601 datetime <see cref="utility::string_t" />.</param>
+        void set_creation_time(utility::datetime value)
+        {
+            m_creation_time = std::move(value);
+            m_creation_time_now = false;
+            m_creation_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this file to now, which indicates the time of the request.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_properties::now" />.</param>
+        void set_creation_time(now_t)
+        {
+            m_creation_time = utility::datetime();
+            m_creation_time_now = true;
+            m_creation_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the creation time property for this file to preserve, which means to keep the existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_properties::preserve" />.</param>
+        void set_creation_time(preserve_t)
+        {
+            m_creation_time = utility::datetime();
+            m_creation_time_now = false;
+            m_creation_time_preserve = true;
+        }
+
+        /// <summary>
+        /// Gets the last write time property for this file.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime last_write_time() const
+        {
+            return m_last_write_time;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this file.
+        /// </summary>
+        /// <param name="value">An ISO 8601 datetime <see cref="utility::string_t" />.</param>
+        void set_last_write_time(utility::datetime value)
+        {
+            m_last_write_time = std::move(value);
+            m_last_write_time_now = false;
+            m_last_write_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this file to now, which indicates the time of the request.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_properties::now" />.</param>
+        void set_last_write_time(now_t)
+        {
+            m_last_write_time = utility::datetime();
+            m_last_write_time_now = true;
+            m_last_write_time_preserve = false;
+        }
+
+        /// <summary>
+        /// Sets the last write time property for this file to preserve, which means to keep the existing value unchanged.
+        /// </summary>
+        /// <param name="value">Explicitly specified datetime value, must be <see cref="azure::storage::cloud_file_properties::preserve" />.</param>
+        void set_last_write_time(preserve_t)
+        {
+            m_last_write_time = utility::datetime();
+            m_last_write_time_now = false;
+            m_last_write_time_preserve = true;
+        }
+
+        /// <summary>
+        /// Gets the change time property for this file.
+        /// </summary>
+        /// <returns>An ISO 8601 datetime <see cref="utility::string_t" />.</returns>
+        utility::datetime change_time() const
+        {
+            return m_change_time;
+        }
+
+        /// <summary>
+        /// Gets the file id property for this file.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> contains the file id.</returns>
+        const utility::string_t& file_id() const
+        {
+            return m_file_id;
+        }
+
+        /// <summary>
+        /// Gets the parent file id property for this file.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> contains the parent file id.</returns>
+        const utility::string_t& file_parent_id() const
+        {
+            return m_parent_id;
+        }
+
+        /// <summary>
+        /// Gets the file's lease status.
+        /// </summary>
+        /// <returns>An <see cref="azure::storage::lease_status" /> object that indicates the file's lease status.</returns>
+        azure::storage::lease_status lease_status() const
+        {
+            return m_lease_status;
+        }
+
+        /// <summary>
+        /// Gets the file's lease state.
+        /// </summary>
+        /// <returns>An <see cref="azure::storage::lease_state" /> object that indicates the file's lease state.</returns>
+        azure::storage::lease_state lease_state() const
+        {
+            return m_lease_state;
+        }
+
+        /// <summary>
+        /// Gets the file's lease duration.
+        /// </summary>
+        /// <returns>An <see cref="azure::storage::lease_duration" /> object that indicates the file's lease duration.</returns>
+        azure::storage::lease_duration lease_duration() const
+        {
+            return m_lease_duration;
+        }
+
     private:
 
-        utility::size64_t m_length;
+        utility::size64_t m_length{ 0 };
         utility::string_t m_etag;
         utility::datetime m_last_modified;
 
@@ -2369,11 +3267,31 @@ namespace azure { namespace storage {
         utility::string_t m_content_md5;
         utility::string_t m_content_disposition;
 
+        bool m_server_encrypted{ false };
+
+        utility::string_t m_permission;
+        utility::string_t m_permission_key;
+        cloud_file_attributes m_attributes{ cloud_file_attributes::preserve };
+        utility::datetime m_creation_time;
+        bool m_creation_time_now{ false };
+        bool m_creation_time_preserve{ true };
+        utility::datetime m_last_write_time;
+        bool m_last_write_time_now{ false };
+        bool m_last_write_time_preserve{ true };
+        utility::datetime m_change_time;
+        utility::string_t m_file_id;
+        utility::string_t m_parent_id;
+        azure::storage::lease_status m_lease_status;
+        azure::storage::lease_state m_lease_state;
+        azure::storage::lease_duration m_lease_duration;
+
         void update_etag_and_last_modified(const cloud_file_properties& other);
-        void update_etag(const cloud_file_properties& other);
+        void update_acl_attributes_filetime_and_fileid(const cloud_file_properties& other);
+        void update_lease(const cloud_file_properties& other);
 
         friend class cloud_file;
         friend class protocol::file_response_parsers;
+        friend class list_file_and_directory_item;
     };
 
     enum class file_range_write
@@ -3918,6 +4836,224 @@ namespace azure { namespace storage {
             return *m_copy_state;
         }
 
+        /// <summary>
+        /// Acquires a lease on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string representing the proposed lease ID for the new lease. May be an empty string if no lease ID is proposed.</param>
+        /// <returns>A string containing the lease ID.</returns>
+        utility::string_t acquire_lease(const utility::string_t& proposed_lease_id) const
+        {
+            return acquire_lease_async(proposed_lease_id).get();
+        }
+
+        /// <summary>
+        /// Acquires a lease on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string representing the proposed lease ID for the new lease. May be an empty string if no lease ID is proposed.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A string containing the lease ID.</returns>
+        utility::string_t acquire_lease(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return acquire_lease_async(proposed_lease_id, condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to acquire a lease on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string representing the proposed lease ID for the new lease. May be an empty string if no lease ID is proposed.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        pplx::task<utility::string_t> acquire_lease_async(const utility::string_t& proposed_lease_id) const
+        {
+            return acquire_lease_async(proposed_lease_id, file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to acquire a lease on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string representing the proposed lease ID for the new lease. May be an empty string if no lease ID is proposed.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        pplx::task<utility::string_t> acquire_lease_async(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return acquire_lease_async(proposed_lease_id, condition, options, context, pplx::cancellation_token::none());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to acquire a lease on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string representing the proposed lease ID for the new lease. May be an empty string if no lease ID is proposed.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access condition for the operation.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <param name="cancellation_token">An <see cref="pplx::cancellation_token" /> object that is used to cancel the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<utility::string_t> acquire_lease_async(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context, const pplx::cancellation_token& cancellation_token) const;
+
+        /// <summary>
+        /// Changes the lease ID on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string containing the proposed lease ID for the lease. May not be empty.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <returns>The new lease ID.</returns>
+        utility::string_t change_lease(const utility::string_t& proposed_lease_id, const file_access_condition& condition) const
+        {
+            return change_lease_async(proposed_lease_id, condition).get();
+        }
+
+        /// <summary>
+        /// Changes the lease ID on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string containing the proposed lease ID for the lease. May not be empty.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>The new lease ID.</returns>
+        utility::string_t change_lease(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return change_lease_async(proposed_lease_id, condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to change the lease ID on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string containing the proposed lease ID for the lease. May not be empty.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        pplx::task<utility::string_t> change_lease_async(const utility::string_t& proposed_lease_id, const file_access_condition& condition) const
+        {
+            return change_lease_async(proposed_lease_id, condition, file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to change the lease ID on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string containing the proposed lease ID for the lease. May not be empty.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        pplx::task<utility::string_t> change_lease_async(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return change_lease_async(proposed_lease_id, condition, options, context, pplx::cancellation_token::none());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to change the lease ID on the file.
+        /// </summary>
+        /// <param name="proposed_lease_id">A string containing the proposed lease ID for the lease. May not be empty.</param>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <param name="cancellation_token">An <see cref="pplx::cancellation_token" /> object that is used to cancel the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object of type <see cref="utility::string_t" /> that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<utility::string_t> change_lease_async(const utility::string_t& proposed_lease_id, const file_access_condition& condition, const file_request_options& options, operation_context context, const pplx::cancellation_token& cancellation_token) const;
+
+        /// <summary>
+        /// Releases the lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        void release_lease(const file_access_condition& condition) const
+        {
+            release_lease_async(condition).wait();
+        }
+
+        /// <summary>
+        /// Releases the lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        void release_lease(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            release_lease_async(condition, options, context).wait();
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to release the lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        pplx::task<void> release_lease_async(const file_access_condition& condition) const
+        {
+            return release_lease_async(condition, file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to release the lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        pplx::task<void> release_lease_async(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return release_lease_async(condition, options, context, pplx::cancellation_token::none());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to release the lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <param name="cancellation_token">An <see cref="pplx::cancellation_token" /> object that is used to cancel the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<void> release_lease_async(const file_access_condition& condition, const file_request_options& options, operation_context context, const pplx::cancellation_token& cancellation_token) const;
+
+        /// <summary>
+        /// Breaks the current lease on the file.
+        /// </summary>
+        void break_lease() const
+        {
+            return break_lease_async().get();
+        }
+
+        /// <summary>
+        /// Breaks the current lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        void break_lease(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return break_lease_async(condition, options, context).get();
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to break the current lease on the file.
+        /// </summary>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        pplx::task<void> break_lease_async() const
+        {
+            return break_lease_async(file_access_condition(), file_request_options(), operation_context());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to break the current lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        pplx::task<void> break_lease_async(const file_access_condition& condition, const file_request_options& options, operation_context context) const
+        {
+            return break_lease_async(condition, options, context, pplx::cancellation_token::none());
+        }
+
+        /// <summary>
+        /// Initiates an asynchronous operation to break the current lease on the file.
+        /// </summary>
+        /// <param name="condition">An <see cref="azure::storage::file_access_condition" /> object that represents the access conditions for the file, including a required lease ID.</param>
+        /// <param name="options">An <see cref="azure::storage::file_request_options" /> object that specifies additional options for the request.</param>
+        /// <param name="context">An <see cref="azure::storage::operation_context" /> object that represents the context for the current operation.</param>
+        /// <param name="cancellation_token">An <see cref="pplx::cancellation_token" /> object that is used to cancel the current operation.</param>
+        /// <returns>A <see cref="pplx::task" /> object that represents the current operation.</returns>
+        WASTORAGE_API pplx::task<void> break_lease_async(const file_access_condition& condition, const file_request_options& options, operation_context context, const pplx::cancellation_token& cancellation_token) const;
+
     private:
 
         void init(storage_credentials credentials);
@@ -3983,7 +5119,9 @@ namespace azure { namespace storage {
             {
                 throw std::runtime_error("Cannot access a cloud file directory as cloud file");
             }
-            return cloud_file(m_name, m_directory);
+            cloud_file result = cloud_file(m_name, m_directory);
+            result.properties().m_length = static_cast<utility::size64_t>(m_length);
+            return result;
         }
 
         /// <summary>
@@ -4021,11 +5159,24 @@ namespace azure { namespace storage {
             return m_name;
         }
 
+        const utility::string_t& file_id() const
+        {
+            return m_file_id;
+        }
+
+        void set_file_id(utility::string_t file_id)
+        {
+            m_file_id = std::move(file_id);
+        }
+
     private:
 
         bool m_is_file;
         utility::string_t m_name;
         int64_t m_length;
         cloud_file_directory m_directory;
+        utility::string_t m_file_id;
     };
 }} // namespace azure::storage
+
+#pragma pop_macro("max")

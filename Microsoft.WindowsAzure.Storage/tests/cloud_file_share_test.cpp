@@ -19,6 +19,8 @@
 #include "file_test_base.h"
 #include "check_macros.h"
 
+#include "wascore/util.h"
+
 #pragma region Fixture
 
 #pragma endregion
@@ -43,7 +45,7 @@ SUITE(File)
 
     TEST_FIXTURE(file_share_test_base, share_create_delete_with_quotas)
     {
-        size_t quota = rand() % 5120 + 1;
+        size_t quota = get_random_int32() % 5120 + 1;
 
         CHECK(!m_share.exists(azure::storage::file_request_options(), m_context));
         CHECK(!m_share.delete_share_if_exists(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context));
@@ -195,9 +197,11 @@ SUITE(File)
 
     TEST_FIXTURE(file_share_test_base, share_stats)
     {
-        m_share.create_if_not_exists(azure::storage::file_request_options(), m_context);
+        m_share.create(azure::storage::file_request_options(), m_context);
         auto quota = m_share.download_share_usage(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         CHECK_EQUAL(0, quota);
+		auto quota_in_bytes = m_share.download_share_usage_in_bytes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+		CHECK_EQUAL(0, quota_in_bytes);
     }
 
     // share level sas test
@@ -237,7 +241,7 @@ SUITE(File)
             policy.set_expiry(utility::datetime::utc_now() + utility::datetime::from_minutes(30));
             auto sas_token = m_share.get_shared_access_signature(policy);
 
-            auto file = m_share.get_root_directory_reference().get_file_reference(_XPLATSTR("file") + utility::conversions::print_string((int)i));
+            auto file = m_share.get_root_directory_reference().get_file_reference(_XPLATSTR("file") + azure::storage::core::convert_to_string((int)i));
             file.create_if_not_exists(512U, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
             file.properties().set_cache_control(_XPLATSTR("no-transform"));
             file.properties().set_content_disposition(_XPLATSTR("attachment"));
@@ -248,5 +252,25 @@ SUITE(File)
 
             check_access(sas_token, permissions, azure::storage::cloud_file_shared_access_headers(), file);
         }
+    }
+
+    TEST_FIXTURE(file_share_test_base, file_permission)
+    {
+        utility::size64_t quota = 512;
+        m_share.create_if_not_exists(quota, azure::storage::file_request_options(), m_context);
+        auto file = m_share.get_root_directory_reference().get_file_reference(_XPLATSTR("test"));
+        utility::string_t content = _XPLATSTR("testtargetfile");
+        file.create_if_not_exists(content.length());
+        file.upload_text(content, azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+        file.download_attributes(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+
+        utility::string_t permission_key = file.properties().permission_key();
+        CHECK(!permission_key.empty());
+
+        utility::string_t permission = m_share.download_file_permission(permission_key);
+        CHECK(!permission.empty());
+
+        utility::string_t permission_key2 = m_share.upload_file_permission(permission);
+        CHECK(!permission_key2.empty());
     }
 }

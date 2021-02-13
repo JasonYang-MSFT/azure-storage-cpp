@@ -46,9 +46,10 @@
 #include "wascore/xmlstream.h"
 #else
 typedef int XmlNodeType;
-#define XmlNodeType_Element xmlpp::TextReader::xmlNodeType::Element
-#define XmlNodeType_Text xmlpp::TextReader::xmlNodeType::Text
-#define XmlNodeType_EndElement xmlpp::TextReader::xmlNodeType::EndElement
+#define XmlNodeType_Element xmlElementType::XML_ELEMENT_NODE
+#define XmlNodeType_Text xmlElementType::XML_TEXT_NODE
+#define XmlNodeType_EndElement xmlElementType::XML_ELEMENT_DECL
+#define XmlNodeType_Whitespace xmlElementType::XML_DTD_NODE //? not align with tinyxml?
 #endif
 
 using namespace web;
@@ -101,13 +102,13 @@ namespace azure { namespace storage { namespace core { namespace xml {
         if (m_data.empty())
             m_reader.reset();
         else
-            m_reader.reset(new xmlpp::TextReader(reinterpret_cast<const unsigned char*>(m_data.data()), static_cast<unsigned int>(m_data.size())));
+            m_reader.reset(new xml_text_reader_wrapper(reinterpret_cast<const unsigned char*>(m_data.data()), static_cast<unsigned int>(m_data.size())));
 #endif
     }
 
-    bool xml_reader::parse()
+    xml_reader::parse_result xml_reader::parse()
     {
-        if (m_streamDone) return false;
+        if (m_streamDone) return xml_reader::parse_result::cannot_continue;
         // Set this to true each time the parse routine is invoked. Most derived readers will only invoke parse once.
         m_continueParsing = true;
 
@@ -119,7 +120,7 @@ namespace azure { namespace storage { namespace core { namespace xml {
         {
 #else
         if (m_reader == nullptr)
-            return !m_continueParsing; // no XML document to read
+            return xml_reader::parse_result::cannot_continue; // no XML document to read
 
         while (m_continueParsing && m_reader->read())
         {
@@ -147,7 +148,10 @@ namespace azure { namespace storage { namespace core { namespace xml {
                 break;
 
             case XmlNodeType_Text:
-                handle_element(m_elementStack.back());
+            case XmlNodeType_Whitespace:
+                if (m_elementStack.size()) {
+                    handle_element(m_elementStack.back());
+                }
                 break;
 
             case XmlNodeType_EndElement:
@@ -160,12 +164,24 @@ namespace azure { namespace storage { namespace core { namespace xml {
             }
         }
 
+        xml_reader::parse_result result = xml_reader::parse_result::can_continue;
         // If the loop was terminated because there was no more to read from the stream, set m_streamDone to true, so exit early
         // the next time parse is invoked.
-        if (m_continueParsing) m_streamDone = true;
-        // Return false if the end of the stream was reached and true if parsing was paused. The return value indicates whether
-        // parsing can be resumed.
-        return !m_continueParsing;
+        // if stream is not done, it means that the parsing is interuptted by pause().
+        // if the element stack is not empty when the stream is done, it means that the xml is not complete.
+        if (m_continueParsing)
+        {
+            m_streamDone = true;
+            if (m_elementStack.empty())
+            {
+                result = xml_reader::parse_result::cannot_continue;
+            }
+            else
+            {
+                result = xml_reader::parse_result::xml_not_complete;
+            }
+        }
+        return result;
     }
 
     utility::string_t xml_reader::get_parent_element_name(size_t pos)
@@ -199,7 +215,7 @@ namespace azure { namespace storage { namespace core { namespace xml {
         }
         return utility::string_t(pwszLocalName);
 #else
-        return utility::string_t(m_reader->get_local_name().raw());
+        return utility::string_t(m_reader->get_local_name());
 #endif
     }
 
@@ -236,7 +252,7 @@ namespace azure { namespace storage { namespace core { namespace xml {
 
         return utility::string_t(pwszValue);
 #else
-        return utility::string_t(m_reader->get_value().raw());
+        return utility::string_t(m_reader->get_value());
 #endif
     }
 
@@ -314,8 +330,8 @@ namespace azure { namespace storage { namespace core { namespace xml {
             throw utility::details::create_system_error(error);
         }
 #else // LINUX
-        m_document.reset(new xmlpp::Document());
-        m_elementStack = std::stack<xmlpp::Element*>();
+        m_document.reset(new xml_document_wrapper());
+        m_elementStack = std::stack<xml_element_wrapper*>();
         m_stream = &stream;
 #endif
     }
@@ -339,7 +355,8 @@ namespace azure { namespace storage { namespace core { namespace xml {
         }
 #else // LINUX
         auto result = m_document->write_to_string();
-        *m_stream << reinterpret_cast<const char *>(result.c_str());
+        if (m_stream != nullptr)
+            *m_stream << reinterpret_cast<const char *>(result.c_str());
 
 #endif
     }

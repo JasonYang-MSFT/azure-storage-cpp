@@ -1,6 +1,156 @@
 Azure Storage Client Library for C++
 History of Changes
 
+Changes in v7.5.0
+- New feature: Blob Versioning.
+- New feature: Jumbo Put Block.
+- New feature: Jumbo Put Blob.
+- Service version upgraded to 2019-12-12.
+
+Changes in v7.4.0
+- New feature: Premium File Share Properties.
+- Fixed a bug: crash in table batch operation.
+- Upgraded CPPRest to latest version 2.10.16.
+
+Changes in v7.3.1
+- Fixed a bug: RangeNotSatisfiable exception is mistakenly swallowed.
+- Fixed a bug: File length is not returned when listing files.
+
+Changes in v7.3.0
+- New feature: Customer provided key (CPK-V)
+- New feature: File lease
+- Upgraded CPPRest to latest version 2.10.15.
+
+Changes in v7.2.0
+- New feature: Previous snapshot with URL.
+- Service version upgraded to 2019-07-07.
+
+Changes in v7.1.0
+- New feature: User delegation SAS.
+- Fixed a bug in snapshot SAS.
+- Fixed some unittest failures.
+- Fixed some crash issues.
+- Added an API with which user can custom HTTP connection settings.
+
+Changes in v7.0.0
+- Default REST API version is 2019-02-02.
+- Upgraded CPPRest to latest version 2.10.14.
+- Raised minimum required GCC version to 5.1.
+- Added new API `azure::storage::cloud_file_share::download_share_usage_in_bytes`.
+- SAS returned by calling `azure::storage::cloud_blob::get_shared_access_signature` on a snapshot object only has access to the snapshot, not the entire blob including every snapshots as before.
+- Added support for AAD based OAuth bearer token authentication.
+- Added support for CRCC64 transactional data integrity machanism as an alternative to MD5.
+- Added new API `azure::storage::cloud_file_share::upload_file_permission`, `azure::storage::cloud_file_share::download_file_permission` to support to create/retrieve a security descriptor at the Azure File share level,
+- Added support for a set of new headers on Azure File APIs.
+
+Changes in v6.1.0
+- Default REST API version is 2018-03-28.
+- Upgraded CPPRest to latest version: 2.10.13.
+- Added following new API for `cloud_blob_client`, `cloud_blob_container` and `cloud_blob` to support to get Azure Storage Account properties.
+    - `pplx::task<account_properties> download_account_properties_async(const blob_request_options& options, operation_context context, const pplx::cancellation_token& cancellation_token)`.
+- Resolved a memory leak issue on Linux platform in xml_wrapper.cpp.
+- Added support to build with Visual Studio 2017.
+- Resolved an issue where it has chance to report an error when trying to upload to block blob with `cloud_block_blob::open_write`.
+- Resolved an issue on unexpected behavior when trying to upload from a local file whose length is longer than value of maximum int32 to block blob, append blob, page blob or Azure Storage file.
+
+Changes in v6.0.0
+- Upgraded CPPRest to latest version: 2.10.10.
+- Resolved a memory leak issue on Linux platform in xml_wrapper.cpp.
+- Resolved an issue where `download_range_to_stream` for `azure::storage::blob` or `azure::storage::file` would update the blob/file MD5 unexpectedly.
+- Added an option `ENABLE_MT` in CMake to build azure-storage-cpp using /MT 
+- Resolved an issue where the first forward slash in the front of the blob name will always be trimmed.
+- Supported cancellation token in asynchronous operations.
+- Supported millisecond level timeout.
+
+Changes in v5.2.0
+- Resolved an issue where listing blobs for blob tier returning faulty result when built with VS2013.
+- Resolved an issue where listing files or directories returning faulty server encryption status when built with VS2013.
+- Added support to set blob tier with lease conditions.
+- Added detailed guideline on how to build on SLES12 SP3, and fixed CMake build script accordingly.
+- Fixed randomly failed test cases.
+
+Changes in v5.1.1
+- Added an API: `azure::storage::operation_context::set_ssl_context_callback`. User can use this API to customize SSL callback in order to change the location of the SSL cert, etc. This is a Linux only API.
+
+Changes in v5.0.1
+- Resolved an issue where default CMake version 2.8 on Ubuntu 14.04 cannot build this client library.
+
+Changes in v5.1.0
+- Stopped releasing public Nuget package starting from this version.
+- Default REST API version is 2017-07-29.
+- Added support to put messages with messagettl = -1, and lifted the cap for message time-to-live value.
+- Now compatible with Openssl 1.1.0.
+- Upgraded the version of dependency Casablanca to 2.10.3.
+
+Changes in v5.0.0
+- Dropped the support for Nuget package with name 'wastorage', now this client library only release with Nuget name 'Microsoft.Azure.Storage.CPP'.
+- Added support for specifying installation destination when compiling with cmake to resolve feature request #183.
+- Enabled CMake on Windows.
+- Added check for metadata name that is empty or contains whitespaces to fail fast, and trimmed beginning/trailing whitespaces for metadata value.
+- Resolved an issue where partial xml body will not throw exception when being parsed.
+- Resolved an issue where retry for Table's batch operation always returns the first response.
+
+Changes in v4.0.0:
+- Fixed an issue where blob names that only contains space cannot be listed properly.
+- Added more compiler setting to unblock ApiScanning.
+- Added a new `nuspec` set that will release `Microsoft.Azure.Storage.CPP` and modified the `wastorage`'s nuspec to depend on Microsoft.Azure.Storage.CPP. Note that 4.0.0 will be the last version of `wastorage`. We strongly advice our user to use Nuget package `Microsoft.Azure.Storage.CPP` start from 4.0.0
+- Resolved an issue where 3rd attempt of retry to download a blob or file will write more data than expected to destination stream.
+- Removed dependency on `libxml++` for Linux platforms. But now this SDK depends on `libxml2`, which is available for most Linux distributions.
+- `azure::storage::file::upload_properties` and `azure::storage::file::upload_properties_async` will no longer resize a file, even when properties contains length that is being set to 0 or other values.
+
+Changes in v3.2.1:
+- Added tag `<requireLicenseAcceptance>true</requireLicenseAcceptance>` in .nuspec files and modified the author to `Microsoft` to comply to the new Microsoft Nuget package rule set. Note that this will require the Nuget package user to accept the license manually when newly installing or upgrading 3.2.1 version (and on) of this client library.
+
+Changes in v3.2:
+- Default REST API version is 2017-04-17.
+- Added support for blob archive feature, which includes following changes:
+  - Added two new APIs for `cloud_blob` to support copying a blob to a new destination setting premium access tier, note that currently, only premium page blobs are supported so these two APIs should only be used for page blobs.
+    - `utility::string_t start_copy(const web::http::uri& source, const azure::storage::premium_blob_tier tier, const access_condition& source_condition, const access_condition& destination_condition, const blob_request_options& options, operation_context context)`.
+    - `pplx::task<utility::string_t> start_copy_async(const web::http::uri& source, const premium_blob_tier tier, const access_condition& source_condition, const access_condition& destination_condition, const blob_request_options& options, operation_context context)`.
+  - Added two new APIs for block blob to support setting the standard blob tier.
+    - `void set_standard_blob_tier(const standard_blob_tier tier, const access_condition & condition, const blob_request_options & options, operation_context context)`
+    - `pplx::task<void> set_standard_blob_tier_async(const standard_blob_tier tier, const access_condition & condition, const blob_request_options & options, operation_context context)`
+  - Added two new APIs for page blob to support setting the premium blob tier.
+    - `void set_premium_blob_tier(const premium_blob_tier tier, const access_condition & condition, const blob_request_options & options, operation_context context)`
+    - `pplx::task<void> set_premium_blob_tier_async(const premium_blob_tier tier, const access_condition & condition, const blob_request_options & options, operation_context context)`
+  - `cloud_blob_properties` now contains 4 more attributes: ` standard_blob_tier`, `premium_blob_tier`, `archive_status`, `access_tier_inferred`. They will be updated using `download_attributes`, and will be set to server returned value when calling `list_blobs`.
+  - Added two new APIs to support creating page blob with premium access tier.
+    - `pplx::task<void> create_async(utility::size64_t size, const premium_blob_tier tier, int64_t sequence_number, const access_condition& condition, const blob_request_options& options, operation_context context)`
+    - `void create(utility::size64_t size, const premium_blob_tier tier, int64_t sequence_number, const access_condition& condition, const blob_request_options& options, operation_context context)`
+
+Changes in v3.1:
+- #136 Fixed error in get blob properties when value in x-ms-copy-source is not encoded correctly.
+- #124 Fixed the bug in parallel download when offset not zero.
+- #123 Fixed the bug that client will overwrite default retry poilcy.
+- Fixed #132 build issue caused by macro min
+- Throwed exception to warn on the conflict between primary_only and download_services_stats
+- Fixed the bug that file share's ETag not updated after quota resize.
+- Fixed the bug that file directory's LMT not updated after upload metadata.
+- Fixed the bug that file's LMT not updated after upload metadata.
+
+Changes in v3.0:
+- Default Rest API version is 2016-05-31.
+- Supported large block size to 100MB, single blob upload threshold to 256MB.
+- Add cloud_blob_container_properties::public_access for public access level of container. The value will be populated in:
+  - cloud_blob_client::list_containers
+  - cloud_blob_container::create
+  - cloud_blob_container::download_attributes
+  - cloud_blob_container::download_permissions
+- Message information including the pop receipt will now be populated to the pass-in message in cloud_queue::add_message.
+- API cloud_file_directory::list_files_and_directories now accepts a new parameter that limits the listing to a specified prefix.
+- All table APIs now accept and enforce the timeout query parameter.
+- Value of cloud_blob_properties::content_md5 for stored Content-MD5 property will also be populated in cloud_blob::download_range_to_stream.
+- Add cloud_page_blob::start_incremental_copy to support incremental copying a snapshot of the source page blob to a destination page blob.
+- Using If-None-Match: * will now fail when reading a blob.
+- Include empty headers when signing request.
+- Fixed the bug that might cause "invalid handle" exception during retry for download to stream APIs.
+- Fixed the issuse that does not work with v141 toolset.
+- Fixed the build issue for MFC/ATL projects caused by macro "max".
+- Changed constant strings' type from * to [].
+- Fixed compile error when _MSC_VER=1810.
+- Use <> instead of "" to include package headers.
+- Rename TargetName for Debug configuration from wastorage to wastoraged.
+
 Changes in v2.6:
 - Supported parallel download for blobs and files
 - Supported installation from Vcpkg

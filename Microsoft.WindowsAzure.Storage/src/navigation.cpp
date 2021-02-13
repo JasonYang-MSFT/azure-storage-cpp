@@ -266,7 +266,7 @@ namespace azure { namespace storage { namespace core {
         storage_credentials parsed_credentials = protocol::parse_query(uri, require_signed_resource);
         if (parsed_credentials.is_sas())
         {
-            if (credentials.is_shared_key() || credentials.is_sas())
+            if (credentials.is_shared_key() || credentials.is_sas() || credentials.is_bearer_token())
             {
                 throw std::invalid_argument(protocol::error_multiple_credentials);
             }
@@ -323,7 +323,7 @@ namespace azure { namespace storage { namespace core {
         }
 
         web::http::uri_builder builder(uri);
-        builder.append_path(path, true);
+        builder.append_path_raw(path, true);
         return builder.to_uri();
     }
 

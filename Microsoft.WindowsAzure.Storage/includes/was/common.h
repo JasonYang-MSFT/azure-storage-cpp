@@ -30,6 +30,9 @@
 #include <boost/asio/ip/address.hpp>
 #endif
 
+#pragma push_macro("min")
+#undef min
+
 namespace azure { namespace storage {
 
     namespace protocol
@@ -805,7 +808,7 @@ namespace azure { namespace storage {
             /// Initializes a new instance of the <see cref="azure::storage::service_properties::metrics_properties" /> class.
             /// </summary>
             metrics_properties()
-                : m_include_apis(false), m_retention_enabled(false), m_retention_days(0)
+                : m_enabled(false), m_include_apis(false), m_retention_enabled(false), m_retention_days(0)
             {
             }
 
@@ -950,7 +953,7 @@ namespace azure { namespace storage {
             /// <summary>
             /// Initializes a new instance of the <see cref="azure::storage::service_properties::cors_rule" /> class.
             /// </summary>
-            cors_rule()
+            cors_rule() : m_max_age(0)
             {
             }
 
@@ -1537,7 +1540,7 @@ namespace azure { namespace storage {
         }
 
         /// <summary>
-        /// Sets the start time of the requeset.
+        /// Sets the start time of the request.
         /// </summary>
         /// <param name="start_time">The start time of the request.</param>
         void set_start_time(utility::datetime start_time)
@@ -1555,7 +1558,7 @@ namespace azure { namespace storage {
         }
 
         /// <summary>
-        /// Sets the end time of the requeset.
+        /// Sets the end time of the request.
         /// </summary>
         /// <param name="start_time">The end time of the request.</param>
         void set_end_time(utility::datetime end_time)
@@ -1706,7 +1709,41 @@ namespace azure { namespace storage {
         {
             m_logger = std::move(logger);
         }
+
+        /// <summary>
+        /// Sets a callback to enable custom setting of the ssl context, at construction time.
+        /// </summary>
+        /// <param name="callback">A user callback allowing for customization of the ssl context at construction time.</param>
+        void set_ssl_context_callback(const std::function<void(boost::asio::ssl::context&)>& callback)
+        {
+            m_ssl_context_callback = callback;
+        }
+
+        /// <summary>
+        /// Gets the user's callback to allow for customization of the ssl context.
+        /// </summary>
+        const std::function<void(boost::asio::ssl::context&)>& get_ssl_context_callback() const
+        {
+            return m_ssl_context_callback;
+        }
 #endif
+
+        /// <summary>
+        /// Sets a callback to enable custom setting of platform specific options.
+        /// </summary>
+        /// <param name="callback">A user callback allowing for customization of the session.</param>
+        void set_native_session_handle_options_callback(const std::function<void(web::http::client::native_handle)>& callback)
+        {
+            m_native_session_handle_options_callback = callback;
+        }
+
+        /// <summary>
+        /// Gets the user's callback to custom setting of platform specific options.
+        /// </summary>
+        const std::function<void(web::http::client::native_handle)>& get_native_session_handle_options_callback() const
+        {
+            return m_native_session_handle_options_callback;
+        }
 
     private:
 
@@ -1716,13 +1753,15 @@ namespace azure { namespace storage {
         web::http::http_headers m_user_headers;
         utility::datetime m_start_time;
         utility::datetime m_end_time;
-        client_log_level m_log_level;
+        client_log_level m_log_level = client_log_level::log_level_off;
         web::web_proxy m_proxy;
         std::vector<request_result> m_request_results;
         pplx::extensibility::critical_section_t m_request_results_lock;
 #ifndef _WIN32
         boost::log::sources::severity_logger<boost::log::trivial::severity_level> m_logger;
+        std::function<void(boost::asio::ssl::context&)> m_ssl_context_callback; //No need to initialize as CPPRest does not initialize it.
 #endif
+        std::function<void(web::http::client::native_handle)> m_native_session_handle_options_callback;
     };
 
     /// <summary>
@@ -1951,7 +1990,41 @@ namespace azure { namespace storage {
         {
             m_impl->set_logger(std::move(logger));
         }
+
+        /// <summary>
+        /// Sets a callback to enable custom setting of the ssl context, at construction time.
+        /// </summary>
+        /// <param name="callback">A user callback allowing for customization of the ssl context at construction time.</param>
+        void set_ssl_context_callback(const std::function<void(boost::asio::ssl::context&)>& callback)
+        {
+            m_impl->set_ssl_context_callback(callback);
+        }
+
+        /// <summary>
+        /// Gets the user's callback to allow for customization of the ssl context.
+        /// </summary>
+        const std::function<void(boost::asio::ssl::context&)>& get_ssl_context_callback() const
+        {
+            return m_impl->get_ssl_context_callback();
+        }
 #endif
+
+        /// <summary>
+        /// Sets a callback to enable custom setting of platform specific options.
+        /// </summary>
+        /// <param name="callback">A user callback allowing for customization of the session.</param>
+        void set_native_session_handle_options_callback(const std::function<void(web::http::client::native_handle)>& callback)
+        {
+            m_impl->set_native_session_handle_options_callback(callback);
+        }
+
+        /// <summary>
+        /// Gets the user's callback to custom setting of platform specific options.
+        /// </summary>
+        const std::function<void(web::http::client::native_handle)>& get_native_session_handle_options_callback() const
+        {
+            return m_impl->get_native_session_handle_options_callback();
+        }
 
         std::shared_ptr<_operation_context> _get_impl() const
         {
@@ -2506,11 +2579,11 @@ namespace azure { namespace storage {
     {
     public:
 
-        // TODO: Optimize request_options to make copying and duplicating these objects unnecesary (maybe make it immutable)
+        // TODO: Optimize request_options to make copying and duplicating these objects unnecessary (maybe make it immutable)
         // TODO: Consider not overwriting unset values in request_options with the service's defaults because it is a confusing interface (the service's defaults would be used only when the user does not supply a request_options parameter)
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 r-value reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -2593,7 +2666,7 @@ namespace azure { namespace storage {
         /// Gets the maximum execution time across all potential retries.
         /// </summary>
         /// <returns>The maximum execution time.</returns>
-        const std::chrono::seconds maximum_execution_time() const
+        const std::chrono::milliseconds maximum_execution_time() const
         {
             return m_maximum_execution_time;
         }
@@ -2602,9 +2675,23 @@ namespace azure { namespace storage {
         /// Sets the maximum execution time across all potential retries.
         /// </summary>
         /// <param name="maximum_execution_time">The maximum execution time.</param>
-        void set_maximum_execution_time(std::chrono::seconds maximum_execution_time)
+        /// <remarks>
+        /// This option will not control the total execution time in async open read/open write operations. It will be set in 
+        /// each underline request of read/write/close operation to make sure those request is finished within this time, or
+        /// timeout if otherwise.
+        /// </remarks>
+        void set_maximum_execution_time(const std::chrono::milliseconds& maximum_execution_time)
         {
             m_maximum_execution_time = maximum_execution_time;
+        }
+
+        /// <summary>
+        /// Gets if the maximum execution time is set by customer.
+        /// </summary>
+        /// <returns>True if the maximum execution time is set by customer. False otherwise</returns>
+        bool is_maximum_execution_time_customized() const
+        {
+            return m_maximum_execution_time.has_value();
         }
 
         /// <summary>
@@ -2650,10 +2737,32 @@ namespace azure { namespace storage {
         }
 
         /// <summary>
+        /// Gets the server certificate validation property.
+        /// </summary>
+        /// <returns>True if certificates are to be verified, false otherwise</returns>
+        bool validate_certificates() const
+        {
+            return m_validate_certificates;
+        }
+
+        /// <summary>
+        /// Sets the server certificate validation property.
+        /// </summary>
+        /// <param name="validate_certificates">False to disable all server certificate validation, true otherwise.</param>
+        /// <remarks>
+        /// Disabling certificate validation is not recommended and will make the user exposed to unsecure environment.
+        /// Please use with caution and at your own risk.
+        /// </remarks>
+        void set_validate_certificates(bool validate_certificates)
+        {
+            m_validate_certificates = validate_certificates;
+        }
+
+        /// <summary>
         /// Gets the expiry time across all potential retries for the request.
         /// </summary>
         /// <returns>The expiry time.</returns>
-        utility::datetime operation_expiry_time() const
+        std::chrono::time_point<std::chrono::system_clock> operation_expiry_time() const
         {
             return m_operation_expiry_time;
         }
@@ -2683,30 +2792,32 @@ namespace azure { namespace storage {
             m_maximum_execution_time.merge(other.m_maximum_execution_time);
             m_location_mode.merge(other.m_location_mode);
             m_http_buffer_size.merge(other.m_http_buffer_size);
+            m_validate_certificates.merge(other.m_validate_certificates);
 
             if (apply_expiry)
             {
-                auto expiry_in_seconds = static_cast<std::chrono::seconds>(m_maximum_execution_time).count();
-                if (!m_operation_expiry_time.is_initialized() && (expiry_in_seconds > 0))
+                auto expiry_in_milliseconds = static_cast<std::chrono::milliseconds>(m_maximum_execution_time);
+                if ((m_operation_expiry_time.time_since_epoch().count() == 0) && (expiry_in_milliseconds.count() > 0))
                 {
                     // This should not be copied from the other options, since
                     // this value should never have a default. Only if it has
                     // not been initialized by the copy constructor, now is the
                     // time to initialize it.
-                    m_operation_expiry_time = utility::datetime::utc_now() + utility::datetime::from_seconds(static_cast<unsigned int>(expiry_in_seconds));
+                    m_operation_expiry_time = std::chrono::system_clock::now() + expiry_in_milliseconds;
                 }
             }
         }
 
     private:
 
-        utility::datetime m_operation_expiry_time;
+        std::chrono::time_point<std::chrono::system_clock> m_operation_expiry_time;
         azure::storage::retry_policy m_retry_policy;
         option_with_default<std::chrono::seconds> m_noactivity_timeout;
         option_with_default<std::chrono::seconds> m_server_timeout;
-        option_with_default<std::chrono::seconds> m_maximum_execution_time;
+        option_with_default<std::chrono::milliseconds> m_maximum_execution_time;
         option_with_default<azure::storage::location_mode> m_location_mode;
         option_with_default<size_t> m_http_buffer_size;
+        option_with_default<bool> m_validate_certificates;
     };
 
     /// <summary>
@@ -2748,13 +2859,30 @@ namespace azure { namespace storage {
     public:
 
         copy_state()
-            : m_bytes_copied(0), m_total_bytes(0), m_status(copy_status::invalid)
         {
         }
 
-#if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
-        // have implicitly-declared move constructor and move assignment operator.
+        copy_state(const copy_state& other)
+        {
+            *this = other;
+        }
+
+        copy_state& operator=(const copy_state& other)
+        {
+            if (this != &other)
+            {
+                m_copy_id = other.m_copy_id;
+                m_completion_time = other.m_completion_time;
+                m_status_description = other.m_status_description;
+                m_bytes_copied = other.m_bytes_copied;
+                m_total_bytes = other.m_total_bytes;
+                m_status = other.m_status;
+                m_source = other.m_source;
+                *m_source_uri = *other.m_source_uri;
+                m_destination_snapshot_time = other.m_destination_snapshot_time;
+            }
+            return *this;
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::copy_state" /> class based on an existing instance.
@@ -2781,10 +2909,11 @@ namespace azure { namespace storage {
                 m_total_bytes = std::move(other.m_total_bytes);
                 m_status = std::move(other.m_status);
                 m_source = std::move(other.m_source);
+                *m_source_uri = std::move(*other.m_source_uri);
+                m_destination_snapshot_time = std::move(other.m_destination_snapshot_time);
             }
             return *this;
         }
-#endif
 
         /// <summary>
         /// Gets the ID of the copy blob operation.
@@ -2820,6 +2949,19 @@ namespace azure { namespace storage {
         /// <returns>A <see cref="web::http::uri" /> indicating the source of a copy operation.</returns>
         const web::http::uri& source() const
         {
+            if (m_source_uri->is_empty())
+            {
+                *m_source_uri = m_source;
+            }
+            return *m_source_uri;
+        }
+
+        /// <summary>
+        /// Gets the URI string of the source blob for a copy operation.
+        /// </summary>
+        /// <returns>A <see cref="utility::string_t" /> indicating the source of a copy operation.</returns>
+        const utility::string_t& source_raw() const
+        {
             return m_source;
         }
 
@@ -2850,18 +2992,31 @@ namespace azure { namespace storage {
             return m_status_description;
         }
 
+        /// <summary>
+        /// Gets the incremental destination snapshot time for the latest incremental copy, if the time is available.
+        /// </summary>
+        /// <returns>A <see cref="utility::datetime" /> containing the destination snapshot time for the latest incremental copy.</returns>
+        utility::datetime destination_snapshot_time() const
+        {
+            return m_destination_snapshot_time;
+        }
+
     private:
 
         utility::string_t m_copy_id;
         utility::datetime m_completion_time;
         utility::string_t m_status_description;
-        int64_t m_bytes_copied;
-        int64_t m_total_bytes;
-        copy_status m_status;
-        web::http::uri m_source;
+        int64_t m_bytes_copied = 0;
+        int64_t m_total_bytes = 0;
+        copy_status m_status = copy_status::invalid;
+        utility::string_t m_source;
+        std::unique_ptr<web::http::uri> m_source_uri = std::unique_ptr<web::http::uri>(new web::http::uri());
+        utility::datetime m_destination_snapshot_time;
 
         friend class protocol::response_parsers;
         friend class protocol::list_blobs_reader;
     };
 
 }} // namespace azure::storage
+
+#pragma pop_macro("min")

@@ -29,7 +29,8 @@ namespace azure { namespace storage {
         m_target_location(target_location),
         m_end_time(utility::datetime::utc_now()),
         m_http_status_code(response.status_code()),
-        m_content_length(std::numeric_limits<utility::size64_t>::max())
+        m_content_length(std::numeric_limits<utility::size64_t>::max()),
+        m_request_server_encrypted(false)
     {
         parse_headers(response.headers());
         if (parse_body_as_error)
@@ -45,7 +46,8 @@ namespace azure { namespace storage {
         m_end_time(utility::datetime::utc_now()),
         m_http_status_code(http_status_code),
         m_extended_error(std::move(extended_error)),
-        m_content_length(std::numeric_limits<utility::size64_t>::max())
+        m_content_length(std::numeric_limits<utility::size64_t>::max()),
+        m_request_server_encrypted(false)
     {
         parse_headers(response.headers());
     }
@@ -55,6 +57,7 @@ namespace azure { namespace storage {
         headers.match(protocol::ms_header_request_id, m_service_request_id);
         headers.match(web::http::header_names::content_length, m_content_length);
         headers.match(web::http::header_names::content_md5, m_content_md5);
+        headers.match(protocol::ms_header_content_crc64, m_content_crc64);
         headers.match(web::http::header_names::etag, m_etag);
 
         utility::string_t request_server_encrypted;

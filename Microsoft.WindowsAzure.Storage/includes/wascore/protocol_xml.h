@@ -21,7 +21,11 @@
 #include "was/blob.h"
 #include "was/queue.h"
 #include "was/file.h"
+#include "wascore/protocol.h"
 #include "wascore/xmlhelpers.h"
+
+#pragma push_macro("max")
+#undef max
 
 namespace azure { namespace storage { namespace protocol {
 
@@ -109,13 +113,21 @@ namespace azure { namespace storage { namespace protocol {
 
         std::vector<cloud_blob_container_list_item> move_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_items);
         }
 
         utility::string_t move_next_marker()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_next_marker);
         }
 
@@ -139,8 +151,8 @@ namespace azure { namespace storage { namespace protocol {
     {
     public:
 
-        cloud_blob_list_item(web::http::uri uri, utility::string_t name, utility::string_t snapshot_time, cloud_metadata metadata, cloud_blob_properties properties, copy_state copy_state)
-            : m_uri(std::move(uri)), m_name(std::move(name)), m_snapshot_time(std::move(snapshot_time)), m_metadata(std::move(metadata)), m_properties(std::move(properties)), m_copy_state(std::move(copy_state))
+        cloud_blob_list_item(web::http::uri uri, utility::string_t name, utility::string_t snapshot_time, bool is_current_version, cloud_metadata metadata, cloud_blob_properties properties, copy_state copy_state)
+            : m_uri(std::move(uri)), m_name(std::move(name)), m_snapshot_time(std::move(snapshot_time)), m_is_current_version(is_current_version), m_metadata(std::move(metadata)), m_properties(std::move(properties)), m_copy_state(std::move(copy_state))
         {
         }
 
@@ -157,6 +169,11 @@ namespace azure { namespace storage { namespace protocol {
         utility::string_t move_snapshot_time()
         {
             return std::move(m_snapshot_time);
+        }
+
+        bool is_current_version() const
+        {
+            return m_is_current_version;
         }
 
         cloud_metadata move_metadata()
@@ -179,6 +196,7 @@ namespace azure { namespace storage { namespace protocol {
         web::http::uri m_uri;
         utility::string_t m_name;
         utility::string_t m_snapshot_time;
+        bool m_is_current_version;
         cloud_metadata m_metadata;
         cloud_blob_properties m_properties;
         azure::storage::copy_state m_copy_state;
@@ -220,19 +238,31 @@ namespace azure { namespace storage { namespace protocol {
 
         std::vector<cloud_blob_list_item> move_blob_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_blob_items);
         }
 
         std::vector<cloud_blob_prefix_list_item> move_blob_prefix_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_blob_prefix_items);
         }
 
         utility::string_t move_next_marker()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_next_marker);
         }
 
@@ -250,6 +280,7 @@ namespace azure { namespace storage { namespace protocol {
         utility::string_t m_name;
         web::http::uri m_uri;
         utility::string_t m_snapshot_time;
+        bool m_is_current_version = false;
         cloud_metadata m_metadata;
         cloud_blob_properties m_properties;
         copy_state m_copy_state;
@@ -267,7 +298,11 @@ namespace azure { namespace storage { namespace protocol {
         // Extracts the result. This method can only be called once on this reader
         std::vector<page_range> move_result()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_page_list);
         }
 
@@ -293,7 +328,11 @@ namespace azure { namespace storage { namespace protocol {
         // Extracts the result. This method can only be called once on this reader
         std::vector<page_diff_range> move_result()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_page_list);
         }
 
@@ -319,7 +358,11 @@ namespace azure { namespace storage { namespace protocol {
         // Extracts the result. This method can only be called once on this reader
         std::vector<block_list_item> move_result()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_block_list);
         }
 
@@ -361,7 +404,11 @@ namespace azure { namespace storage { namespace protocol {
 
         shared_access_policies<Policy> move_policies()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_policies);
         }
 
@@ -430,12 +477,12 @@ namespace azure { namespace storage { namespace protocol {
 
                 if (policy.start().is_initialized())
                 {
-                    write_element(xml_access_policy_start, core::convert_to_string_with_fixed_length_fractional_seconds(policy.start()));
+                    write_element(xml_access_policy_start, core::convert_to_iso8601_string(policy.start(), 7));
                 }
 
                 if (policy.expiry().is_initialized())
                 {
-                    write_element(xml_access_policy_expiry, core::convert_to_string_with_fixed_length_fractional_seconds(policy.expiry()));
+                    write_element(xml_access_policy_expiry, core::convert_to_iso8601_string(policy.expiry(), 7));
                 }
 
                 if (policy.permission() != 0)
@@ -488,13 +535,21 @@ namespace azure { namespace storage { namespace protocol {
 
         std::vector<cloud_queue_list_item> move_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_items);
         }
 
         utility::string_t move_next_marker()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_next_marker);
         }
 
@@ -576,7 +631,12 @@ namespace azure { namespace storage { namespace protocol {
 
         std::vector<cloud_message_list_item> move_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                // This is not a retryable exception because Get operation for messages changes server content.
+                throw storage_exception(protocol::error_xml_not_complete, false);
+            }
             return std::move(m_items);
         }
 
@@ -649,13 +709,17 @@ namespace azure { namespace storage { namespace protocol {
     public:
 
         explicit get_share_stats_reader(concurrency::streams::istream stream)
-            : xml_reader(stream), m_quota(maximum_share_quota)
+            : xml_reader(stream), m_quota(std::numeric_limits<unsigned long long>::max())
         {
         }
 
-        int32_t get()
+        int64_t get()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return m_quota;
         }
 
@@ -665,7 +729,7 @@ namespace azure { namespace storage { namespace protocol {
         virtual void handle_element(const utility::string_t& element_name);
         virtual void handle_end_element(const utility::string_t& element_name);
 
-        int32_t m_quota;
+        int64_t m_quota;
     };
 
     class list_shares_reader : public core::xml::xml_reader
@@ -679,13 +743,21 @@ namespace azure { namespace storage { namespace protocol {
 
         std::vector<cloud_file_share_list_item> move_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_items);
         }
 
         utility::string_t move_next_marker()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_next_marker);
         }
 
@@ -710,19 +782,27 @@ namespace azure { namespace storage { namespace protocol {
     public:
 
         explicit list_files_and_directories_reader(concurrency::streams::istream stream)
-            : xml_reader(stream), m_is_file(false), m_size(0)
+            : xml_reader(stream), m_size(0)
         {
         }
 
         std::vector<list_file_and_directory_item> move_items()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_items);
         }
 
         utility::string_t move_next_marker()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_next_marker);
         }
 
@@ -736,11 +816,12 @@ namespace azure { namespace storage { namespace protocol {
         utility::string_t m_next_marker;
         utility::string_t m_share_name;
         utility::string_t m_directory_path;
+        utility::string_t m_directory_file_id;
         web::http::uri m_service_uri;
 
-        bool m_is_file;
         utility::string_t m_name;
         int64_t m_size;
+        utility::string_t m_file_id;
     };
 
     class list_file_ranges_reader : public core::xml::xml_reader
@@ -755,7 +836,11 @@ namespace azure { namespace storage { namespace protocol {
         // Extracts the result. This method can only be called once on this reader
         std::vector<file_range> move_result()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_range_list);
         }
 
@@ -780,7 +865,11 @@ namespace azure { namespace storage { namespace protocol {
 
         service_properties move_properties()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_service_properties);
         }
 
@@ -830,7 +919,11 @@ namespace azure { namespace storage { namespace protocol {
 
         service_stats move_stats()
         {
-            parse();
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
             return std::move(m_service_stats);
         }
 
@@ -845,4 +938,40 @@ namespace azure { namespace storage { namespace protocol {
         void handle_geo_replication_status(const utility::string_t& element_name);
     };
 
+    class user_delegation_key_time_writer : public core::xml::xml_writer
+    {
+    public:
+
+        user_delegation_key_time_writer()
+        {
+        }
+
+        std::string write(const utility::datetime& start, const utility::datetime& expiry);
+    };
+
+    class user_delegation_key_reader : public core::xml::xml_reader
+    {
+    public:
+        explicit user_delegation_key_reader(concurrency::streams::istream stream) : xml_reader(stream)
+        {
+        }
+
+        user_delegation_key move_key()
+        {
+            auto result = parse();
+            if (result == xml_reader::parse_result::xml_not_complete)
+            {
+                throw storage_exception(protocol::error_xml_not_complete, true);
+            }
+            return std::move(m_key);
+        }
+
+    protected:
+        void handle_element(const utility::string_t& element_name) override;
+
+        user_delegation_key m_key;
+    };
+
 }}} // namespace azure::storage::protocol
+
+#pragma pop_macro("max")

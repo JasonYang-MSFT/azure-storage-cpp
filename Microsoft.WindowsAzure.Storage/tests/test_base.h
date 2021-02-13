@@ -20,6 +20,17 @@
 #include "was/common.h"
 #include "was/storage_account.h"
 
+#if defined(_WIN32)
+#define OPERATION_CANCELED "operation canceled"
+#else
+#define OPERATION_CANCELED "Operation canceled"
+#endif
+
+bool get_random_boolean();
+int32_t get_random_int32();
+int64_t get_random_int64();
+double get_random_double();
+
 class test_config
 {
 public:
@@ -35,11 +46,32 @@ public:
         return m_account;
     }
 
+    const azure::storage::cloud_storage_account& premium_account() const
+    {
+        return m_premium_account;
+    }
+
+    const azure::storage::cloud_storage_account& blob_storage_account() const
+    {
+        return m_blob_storage_account;
+    }
+
+    const utility::string_t& get_oauth_account_name() const;
+    utility::string_t get_oauth_token() const;
+
 private:
 
     test_config();
 
     azure::storage::cloud_storage_account m_account;
+    azure::storage::cloud_storage_account m_premium_account;
+    azure::storage::cloud_storage_account m_blob_storage_account;
+
+    utility::string_t m_token_account_name;
+    utility::string_t m_token_tenant_id;
+    utility::string_t m_token_client_id;
+    utility::string_t m_token_client_secret;
+    utility::string_t m_token_resource;
 };
 
 class test_base
@@ -63,20 +95,39 @@ protected:
     azure::storage::operation_context m_context;
     
     static utility::string_t object_name_prefix;
-    static bool is_random_initialized;
 
 public:
 
+    static utility::datetime parse_datetime(const utility::string_t& value, utility::datetime::date_format format = utility::datetime::date_format::RFC_1123);
     static utility::string_t get_string(utility::char_t value1, utility::char_t value2);
-    static void initialize_random();
-    static bool get_random_boolean();
-    static int32_t get_random_int32();
-    static int64_t get_random_int64();
-    static double get_random_double();
-    static utility::string_t get_random_string(const std::vector<utility::char_t> charset, size_t size);
+    static utility::string_t get_random_string(const std::vector<utility::char_t>& charset, size_t size);
     static utility::string_t get_random_string(size_t size = 10);
     static utility::datetime get_random_datetime();
     static std::vector<uint8_t> get_random_binary_data();
+    static void fill_buffer(std::vector<uint8_t>& buffer);
+    static void fill_buffer(std::vector<uint8_t>& buffer, size_t offset, size_t count);
     static utility::uuid get_random_guid();
     static utility::string_t get_object_name(const utility::string_t& object_type_name);
+    
+    template <typename TEnum> 
+    static TEnum get_random_enum(TEnum max_enum_value)
+    {
+        return static_cast<TEnum>(get_random_int32() % (static_cast<int>(max_enum_value) + 1));
+    }
+
+    template <typename It, typename T> 
+    static std::vector<T> transform_if(It it, std::function<bool(const typename It::value_type &)> func_if, std::function<T(const typename It::value_type &)> func_tran)
+    {
+        std::vector<T> results;
+        It end_it;
+        while (it != end_it)
+        {
+            if (func_if(*it))
+            {
+                results.push_back(func_tran(*it));
+            }
+            ++it;
+        }
+        return results;
+    }
 };

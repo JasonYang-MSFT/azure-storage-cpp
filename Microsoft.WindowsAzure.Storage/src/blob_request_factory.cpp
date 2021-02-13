@@ -80,7 +80,7 @@ namespace azure { namespace storage { namespace protocol {
     web::http::http_request set_blob_container_metadata(const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_resource_type, resource_container, /* do_encoding */ false));
-        return set_blob_metadata(metadata, condition, uri_builder, timeout, context);
+        return set_blob_metadata(metadata, condition, blob_request_options(), uri_builder, timeout, context);
     }
 
     web::http::http_request get_blob_container_acl(const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
@@ -180,6 +180,12 @@ namespace azure { namespace storage { namespace protocol {
             include.append(_XPLATSTR(","));
         }
 
+        if ((includes & blob_listing_details::versions) != 0)
+        {
+            include.append(component_versions);
+            include.append(_XPLATSTR(","));
+        }
+
         if (!include.empty())
         {
             include.pop_back();
@@ -260,24 +266,54 @@ namespace azure { namespace storage { namespace protocol {
         }
     }
 
-    web::http::http_request put_block(const utility::string_t& block_id, const utility::string_t& content_md5, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    void add_encryption_key(web::http::http_request& request, const std::vector<uint8_t>& key)
+    {
+        if (key.empty())
+        {
+            return;
+        }
+        request.headers().add(ms_header_encryption_key, utility::conversions::to_base64(key));
+        auto sha256_hash_provider = core::hash_provider::create_sha256_hash_provider();
+        sha256_hash_provider.write(key.data(), key.size());
+        sha256_hash_provider.close();
+        request.headers().add(ms_header_encryption_key_sha256, sha256_hash_provider.hash().sha256());
+        request.headers().add(ms_header_encryption_algorithm, header_value_encryption_algorithm_aes256);
+    }
+
+    web::http::http_request put_block(const utility::string_t& block_id, const checksum& content_checksum, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_block, /* do_encoding */ false));
         uri_builder.append_query(core::make_query_parameter(uri_query_block_id, block_id));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
-        request.headers().add(web::http::header_names::content_md5, content_md5);
+        if (content_checksum.is_md5())
+        {
+            request.headers().add(web::http::header_names::content_md5, content_checksum.md5());
+        }
+        else if (content_checksum.is_crc64())
+        {
+            request.headers().add(ms_header_content_crc64, content_checksum.crc64());
+        }
         add_lease_id(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request put_block_list(const cloud_blob_properties& properties, const cloud_metadata& metadata, const utility::string_t& content_md5, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request put_block_list(const cloud_blob_properties& properties, const cloud_metadata& metadata, const checksum& content_checksum, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_block_list, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
-        request.headers().add(web::http::header_names::content_md5, content_md5);
+        if (content_checksum.is_md5())
+        {
+            request.headers().add(web::http::header_names::content_md5, content_checksum.md5());
+        }
+        else if (content_checksum.is_crc64())
+        {
+            request.headers().add(ms_header_content_crc64, content_checksum.crc64());
+        }
         add_properties(request, properties);
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
@@ -316,18 +352,25 @@ namespace azure { namespace storage { namespace protocol {
         return request;
     }
 
-    web::http::http_request get_page_ranges_diff(utility::string_t previous_snapshot_time, utility::size64_t offset, utility::size64_t length, const utility::string_t& snapshot_time, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request get_page_ranges_diff(const utility::string_t& previous_snapshot_time, const utility::string_t& previous_snapshot_url, utility::size64_t offset, utility::size64_t length, const utility::string_t& snapshot_time, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         add_snapshot_time(uri_builder, snapshot_time);
-        add_previous_snapshot_time(uri_builder, previous_snapshot_time);
+        if (!previous_snapshot_time.empty())
+        {
+            add_previous_snapshot_time(uri_builder, previous_snapshot_time);
+        }
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_page_list, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::GET, uri_builder, timeout, context));
+        if (!previous_snapshot_url.empty())
+        {
+            request.headers().add(ms_header_previous_snapshot_url, previous_snapshot_url);
+        }
         add_range(request, offset, length);
         add_access_condition(request, condition);
         return request;
     }
 
-    web::http::http_request put_page(page_range range, page_write write, const utility::string_t& content_md5, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request put_page(page_range range, page_write write, const checksum& content_checksum, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_page, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
@@ -339,7 +382,14 @@ namespace azure { namespace storage { namespace protocol {
         {
         case page_write::update:
             headers.add(ms_header_page_write, header_value_page_write_update);
-            add_optional_header(headers, web::http::header_names::content_md5, content_md5);
+            if (content_checksum.is_md5())
+            {
+                add_optional_header(headers, web::http::header_names::content_md5, content_checksum.md5());
+            }
+            else if (content_checksum.is_crc64())
+            {
+                add_optional_header(headers, ms_header_content_crc64, content_checksum.crc64());
+            }
             break;
 
         case page_write::clear:
@@ -349,72 +399,98 @@ namespace azure { namespace storage { namespace protocol {
 
         add_sequence_number_condition(request, condition);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request append_block(const utility::string_t& content_md5, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request append_block(const checksum& content_checksum, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_append_block, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
-        request.headers().add(web::http::header_names::content_md5, content_md5);
+        if (content_checksum.is_md5())
+        {
+            request.headers().add(web::http::header_names::content_md5, content_checksum.md5());
+        }
+        else if (content_checksum.is_crc64())
+        {
+            request.headers().add(ms_header_content_crc64, content_checksum.crc64());
+        }
         add_append_condition(request, condition);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request put_block_blob(const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request put_block_blob(const checksum& content_checksum, const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         request.headers().add(ms_header_blob_type, header_value_blob_type_block);
         add_properties(request, properties);
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        if (content_checksum.is_crc64())
+        {
+            request.headers().add(ms_header_content_crc64, content_checksum.crc64());
+        }
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request put_page_blob(utility::size64_t size, int64_t sequence_number, const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request put_page_blob(utility::size64_t size, const utility::string_t& tier, int64_t sequence_number, const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         web::http::http_headers& headers = request.headers();
         headers.add(ms_header_blob_type, header_value_blob_type_page);
         headers.add(ms_header_blob_content_length, size);
         headers.add(ms_header_blob_sequence_number, sequence_number);
+        if (tier != header_value_access_tier_unknown)
+        {
+            headers.add(ms_header_access_tier, tier);
+        }
         add_properties(request, properties);
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request put_append_blob(const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request put_append_blob(const cloud_blob_properties& properties, const cloud_metadata& metadata, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         request.headers().add(ms_header_blob_type, header_value_blob_type_append);
         add_properties(request, properties);
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request get_blob(utility::size64_t offset, utility::size64_t length, bool get_range_content_md5, const utility::string_t& snapshot_time, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request get_blob(utility::size64_t offset, utility::size64_t length, checksum_type needs_checksum, const utility::string_t& snapshot_time, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         add_snapshot_time(uri_builder, snapshot_time);
         web::http::http_request request(base_request(web::http::methods::GET, uri_builder, timeout, context));
         add_range(request, offset, length);
 
-        if ((offset < std::numeric_limits<utility::size64_t>::max()) && get_range_content_md5)
+        if ((offset < std::numeric_limits<utility::size64_t>::max()) && needs_checksum == checksum_type::md5)
         {
             request.headers().add(ms_header_range_get_content_md5, header_value_true);
         }
+        else if ((offset < std::numeric_limits<utility::size64_t>::max()) && needs_checksum == checksum_type::crc64)
+        {
+            request.headers().add(ms_header_range_get_content_crc64, header_value_true);
+        }
 
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request get_blob_properties(const utility::string_t& snapshot_time, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request get_blob_properties(const utility::string_t& snapshot_time, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         add_snapshot_time(uri_builder, snapshot_time);
         web::http::http_request request(base_request(web::http::methods::HEAD, uri_builder, timeout, context));
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
@@ -464,21 +540,23 @@ namespace azure { namespace storage { namespace protocol {
         return request;
     }
 
-    web::http::http_request snapshot_blob(const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request snapshot_blob(const cloud_metadata& metadata, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_snapshot, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
-    web::http::http_request set_blob_metadata(const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request set_blob_metadata(const cloud_metadata& metadata, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         uri_builder.append_query(core::make_query_parameter(uri_query_component, component_metadata, /* do_encoding */ false));
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         add_metadata(request, metadata);
         add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
         return request;
     }
 
@@ -505,10 +583,14 @@ namespace azure { namespace storage { namespace protocol {
         return request;
     }
 
-    web::http::http_request copy_blob(const web::http::uri& source, const access_condition& source_condition, const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    web::http::http_request copy_blob(const web::http::uri& source, const utility::string_t& tier, const access_condition& source_condition, const cloud_metadata& metadata, const access_condition& condition, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
     {
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         request.headers().add(ms_header_copy_source, source.to_string());
+        if (tier != header_value_access_tier_unknown)
+        {
+            request.headers().add(ms_header_access_tier, tier);
+        }
         add_source_access_condition(request, source_condition);
         add_access_condition(request, condition);
         add_metadata(request, metadata);
@@ -522,6 +604,35 @@ namespace azure { namespace storage { namespace protocol {
         web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
         request.headers().add(ms_header_copy_action, header_value_copy_abort);
         add_lease_id(request, condition);
+        return request;
+    }
+
+    web::http::http_request incremental_copy_blob(const web::http::uri& source, const access_condition& condition, const cloud_metadata& metadata, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    {
+        uri_builder.append_query(core::make_query_parameter(uri_query_component, component_incrementalcopy, /* do_encoding */ false));
+        web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
+        request.headers().add(ms_header_copy_source, source.to_string());
+        add_access_condition(request, condition);
+        add_metadata(request, metadata);
+        return request;
+    }
+
+    web::http::http_request set_blob_tier(const utility::string_t& tier, const access_condition& condition, const blob_request_options& options, web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    {
+        uri_builder.append_query(core::make_query_parameter(uri_query_component, component_tier, /* do_encoding */ false));
+        web::http::http_request request(base_request(web::http::methods::PUT, uri_builder, timeout, context));
+        
+        request.headers().add(ms_header_access_tier, tier);
+        add_access_condition(request, condition);
+        add_encryption_key(request, options.encryption_key());
+        return request;
+    }
+
+    web::http::http_request get_user_delegation_key(web::http::uri_builder& uri_builder, const std::chrono::seconds& timeout, operation_context context)
+    {
+        uri_builder.append_query(core::make_query_parameter(uri_query_resource_type, resource_service), /* do_encoding */ false);
+        uri_builder.append_query(core::make_query_parameter(uri_query_component, component_user_delegation_key), /* do encoding */ false);
+        web::http::http_request request(base_request(web::http::methods::POST, uri_builder, timeout, context));
         return request;
     }
 

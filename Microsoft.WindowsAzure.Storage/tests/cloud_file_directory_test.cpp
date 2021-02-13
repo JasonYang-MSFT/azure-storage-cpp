@@ -19,6 +19,8 @@
 #include "file_test_base.h"
 #include "check_macros.h"
 
+#include "wascore/util.h"
+
 #pragma region Fixture
 
 #pragma endregion
@@ -103,9 +105,11 @@ SUITE(File)
         CHECK(m_directory.metadata().empty());
         CHECK(m_directory.properties().etag().empty());
         CHECK(!m_directory.properties().last_modified().is_initialized());
+        CHECK(!m_directory.properties().server_encrypted());
 
         m_directory.create_if_not_exists(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
         m_directory.download_attributes();
+        CHECK(m_directory.properties().server_encrypted());
 
         CHECK(m_directory.get_parent_share_reference().is_valid());
         check_equal(m_share, m_directory.get_parent_share_reference());
@@ -233,6 +237,7 @@ SUITE(File)
                             CHECK(file.metadata().empty());
                             CHECK(file.properties().etag().empty());
                             CHECK(!file.properties().last_modified().is_initialized());
+                            CHECK_EQUAL(512U, file.properties().length());
 
                             for (auto file_name = files_three.begin(); file_name != files_three.end(); file_name++)
                             {
@@ -254,6 +259,7 @@ SUITE(File)
                         CHECK(file.metadata().empty());
                         CHECK(file.properties().etag().empty());
                         CHECK(!file.properties().last_modified().is_initialized());
+                        CHECK_EQUAL(512U, file.properties().length());
 
                         for (auto file_name = files_two.begin(); file_name != files_two.end(); file_name++)
                         {
@@ -278,6 +284,7 @@ SUITE(File)
                 CHECK(file.metadata().empty());
                 CHECK(file.properties().etag().empty());
                 CHECK(!file.properties().last_modified().is_initialized());
+                CHECK_EQUAL(512U, file.properties().length());
 
                 for (auto file_name = files_one.begin(); file_name != files_one.end(); file_name++)
                 {
@@ -292,6 +299,70 @@ SUITE(File)
 
         CHECK(direcotries_one.empty());
         CHECK(files_one.empty());
+    }
+
+    TEST_FIXTURE(file_directory_test_base, directory_list_files_and_directories_with_prefix)
+    {
+        m_directory.create_if_not_exists(azure::storage::file_access_condition(), azure::storage::file_request_options(), m_context);
+
+        auto prefix = _XPLATSTR("t") + get_random_string(3);
+        auto dir_prefix = prefix + _XPLATSTR("dir");
+        auto file_prefix = prefix + _XPLATSTR("file");
+        auto exclude_prefix = _XPLATSTR("exclude");
+
+        std::vector<azure::storage::cloud_file_directory> directories;
+        std::vector<azure::storage::cloud_file> files;
+        for (int i = 0; i < get_random_int32() % 3 + 1; ++i)
+        {
+            auto subdirectory = m_directory.get_subdirectory_reference(dir_prefix + azure::storage::core::convert_to_string(i));
+            subdirectory.create();
+            directories.push_back(subdirectory);
+
+            auto file = m_directory.get_file_reference(file_prefix + azure::storage::core::convert_to_string(i));
+            file.create(1);
+            files.push_back(file);
+
+            m_directory.get_subdirectory_reference(exclude_prefix + azure::storage::core::convert_to_string(i)).create();
+        }
+
+        size_t num_items_expected = directories.size() + files.size();
+        size_t num_items_actual = 0;
+        for (auto&& item : m_directory.list_files_and_directories(prefix))
+        {
+            ++num_items_actual;
+            if (item.is_directory())
+            {
+                auto actual = item.as_directory();
+                CHECK(actual.get_parent_share_reference().is_valid());
+                check_equal(m_share, actual.get_parent_share_reference());
+                
+                auto it_found = std::find_if(directories.begin(), directories.end(), [&actual](const azure::storage::cloud_file_directory& expect)
+                {
+                    return actual.name() == expect.name();
+                });
+                CHECK(it_found != directories.end());
+                check_equal(*it_found, actual);
+                directories.erase(it_found);
+            }
+            else if (item.is_file())
+            {
+                auto actual = item.as_file();
+                CHECK(actual.get_parent_share_reference().is_valid());
+                check_equal(m_share, actual.get_parent_share_reference());
+
+                auto it_found = std::find_if(files.begin(), files.end(), [&actual](const azure::storage::cloud_file& expect)
+                {
+                    return actual.name() == expect.name();
+                });
+                CHECK(it_found != files.end());
+                check_equal(*it_found, actual);
+                files.erase(it_found);
+            }
+        }
+
+        CHECK_EQUAL(num_items_expected, num_items_actual);
+        CHECK(directories.empty());
+        CHECK(files.empty());
     }
 
     TEST_FIXTURE(file_directory_test_base, directory_get_directory_ref)

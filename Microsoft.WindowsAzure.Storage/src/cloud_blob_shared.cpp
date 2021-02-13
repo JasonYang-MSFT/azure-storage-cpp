@@ -32,6 +32,7 @@ namespace azure { namespace storage {
     {
         m_etag = parsed_properties.etag();
         m_last_modified = parsed_properties.last_modified();
+        m_version_id = parsed_properties.version_id();
     }
 
     void cloud_blob_properties::copy_from_root(const cloud_blob_properties& root_blob_properties)
@@ -47,6 +48,7 @@ namespace azure { namespace storage {
         m_content_language = root_blob_properties.m_content_language;
         m_content_md5 = root_blob_properties.m_content_md5;
         m_content_type = root_blob_properties.m_content_type;
+        m_encryption_key_sha256 = root_blob_properties.m_encryption_key_sha256;
     }
 
     void cloud_blob_properties::update_size(const cloud_blob_properties& parsed_properties)
@@ -64,16 +66,14 @@ namespace azure { namespace storage {
         m_append_blob_committed_block_count = parsed_properties.append_blob_committed_block_count();
     }
 
-    void cloud_blob_properties::update_all(const cloud_blob_properties& parsed_properties, bool ignore_md5)
+    void cloud_blob_properties::update_all(const cloud_blob_properties& parsed_properties)
     {
         if ((type() != blob_type::unspecified) && (type() != parsed_properties.type()))
         {
             throw storage_exception(protocol::error_blob_type_mismatch, false);
         }
 
-        utility::string_t content_md5(ignore_md5 ? m_content_md5 : parsed_properties.content_md5());
         *this = parsed_properties;
-        m_content_md5 = content_md5;
     }
 
 }} // namespace azure::storage

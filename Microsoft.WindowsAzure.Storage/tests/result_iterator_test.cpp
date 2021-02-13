@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "check_macros.h"
 #include "test_base.h"
+
 #include "wascore/util.h"
 
 typedef std::function<azure::storage::result_segment<int>(const azure::storage::continuation_token &, size_t)> result_generator_type;
@@ -58,7 +59,7 @@ public:
         if (!m_return_full_segment)
         {
             // return less results
-            res_segment_size = std::rand() % (res_segment_size + 1);
+            res_segment_size = get_random_int32() % (res_segment_size + 1);
         }
 
         std::vector<int> res_vec;

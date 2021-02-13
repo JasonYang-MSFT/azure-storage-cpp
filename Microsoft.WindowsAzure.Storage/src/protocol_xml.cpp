@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "wascore/protocol.h"
 #include "wascore/protocol_xml.h"
+#include "wascore/util.h"
 
 namespace azure { namespace storage { namespace protocol {
 
@@ -74,7 +75,7 @@ namespace azure { namespace storage { namespace protocol {
         {
             if (element_name == xml_last_modified)
             {
-                m_properties.m_last_modified = parse_last_modified(get_current_element_text());
+                m_properties.m_last_modified = parse_datetime_rfc1123(get_current_element_text());
                 return;
             }
 
@@ -100,6 +101,11 @@ namespace azure { namespace storage { namespace protocol {
             {
                 m_properties.m_lease_duration = parse_lease_duration(get_current_element_text());
                 return;
+            }
+
+            if (element_name == xml_public_access)
+            {
+                m_properties.m_public_access = parse_public_access_type(get_current_element_text());
             }
         }
 
@@ -167,7 +173,7 @@ namespace azure { namespace storage { namespace protocol {
         {
             if (element_name == xml_last_modified)
             {
-                m_properties.m_last_modified = parse_last_modified(get_current_element_text());
+                m_properties.m_last_modified = parse_datetime_rfc1123(get_current_element_text());
                 return;
             }
 
@@ -279,7 +285,7 @@ namespace azure { namespace storage { namespace protocol {
 
             if (element_name == xml_copy_completion_time)
             {
-                m_copy_state.m_completion_time = response_parsers::parse_copy_completion_time(get_current_element_text());
+                m_copy_state.m_completion_time = response_parsers::parse_datetime(get_current_element_text());
                 return;
             }
 
@@ -288,11 +294,51 @@ namespace azure { namespace storage { namespace protocol {
                 m_copy_state.m_status_description = get_current_element_text();
                 return;
             }
+
+            if (element_name == xml_incremental_copy)
+            {
+                m_properties.m_is_incremental_copy = response_parsers::parse_boolean(get_current_element_text());
+                return;
+            }
+
+            if (element_name == xml_copy_destination_snapshot)
+            {
+                m_copy_state.m_destination_snapshot_time = response_parsers::parse_datetime(get_current_element_text(), utility::datetime::date_format::ISO_8601);
+            }
+
+            if (element_name == xml_access_tier)
+            {
+                auto current_text = get_current_element_text();
+                m_properties.m_standard_blob_tier = response_parsers::parse_standard_blob_tier(current_text);
+                m_properties.m_premium_blob_tier = response_parsers::parse_premium_blob_tier(current_text);
+            }
+
+            if (element_name == xml_access_tier_inferred)
+            {
+                m_properties.m_access_tier_inferred = response_parsers::parse_boolean(get_current_element_text());
+            }
+
+            if (element_name == xml_access_tier_change_time)
+            {
+                m_properties.m_access_tier_change_time = response_parsers::parse_datetime(get_current_element_text());
+            }
         }
 
         if (element_name == xml_snapshot)
         {
             m_snapshot_time = get_current_element_text();
+            return;
+        }
+
+        if (element_name == xml_version_id)
+        {
+            m_properties.m_version_id = get_current_element_text();
+            return;
+        }
+
+        if (element_name == xml_is_current_version)
+        {
+            m_is_current_version = response_parsers::parse_boolean(get_current_element_text());
             return;
         }
 
@@ -316,10 +362,11 @@ namespace azure { namespace storage { namespace protocol {
         {
             if (element_name == xml_blob)
             {
-                m_blob_items.push_back(cloud_blob_list_item(std::move(m_uri), std::move(m_name), std::move(m_snapshot_time), std::move(m_metadata), std::move(m_properties), std::move(m_copy_state)));
+                m_blob_items.push_back(cloud_blob_list_item(std::move(m_uri), std::move(m_name), std::move(m_snapshot_time), m_is_current_version, std::move(m_metadata), std::move(m_properties), std::move(m_copy_state)));
                 m_uri = web::uri();
                 m_name = utility::string_t();
                 m_snapshot_time = utility::string_t();
+                m_is_current_version = false;
                 m_metadata = azure::storage::cloud_metadata();
                 m_properties = azure::storage::cloud_blob_properties();
                 m_copy_state = azure::storage::copy_state();
@@ -730,7 +777,7 @@ namespace azure { namespace storage { namespace protocol {
         {
             if (element_name == xml_last_modified)
             {
-                m_properties.m_last_modified = parse_last_modified(get_current_element_text());
+                m_properties.m_last_modified = parse_datetime_rfc1123(get_current_element_text());
                 return;
             }
 
@@ -743,6 +790,30 @@ namespace azure { namespace storage { namespace protocol {
             if (element_name == xml_quota)
             {
                 extract_current_element(m_properties.m_quota);
+                return;
+            }
+
+            if (element_name == xml_provisioned_iops)
+            {
+                extract_current_element(m_properties.m_provisioned_iops);
+                return;
+            }
+
+            if (element_name == xml_provisioned_ingress_mbps)
+            {
+                extract_current_element(m_properties.m_provisioned_ingress);
+                return;
+            }
+
+            if (element_name == xml_provisioned_egress_mpbs)
+            {
+                extract_current_element(m_properties.m_provisioned_egress);
+                return;
+            }
+
+            if (element_name == xml_next_allowed_quota_downgrade_time)
+            {
+                m_properties.m_next_allowed_quota_downgrade_time = parse_datetime_rfc1123(get_current_element_text());;
                 return;
             }
         }
@@ -782,7 +853,7 @@ namespace azure { namespace storage { namespace protocol {
 
     void get_share_stats_reader::handle_element(const utility::string_t& element_name)
     {
-        if (element_name == _XPLATSTR("ShareUsage"))
+        if (element_name == _XPLATSTR("ShareUsageBytes"))
         {
             extract_current_element(m_quota);
             return;
@@ -815,6 +886,10 @@ namespace azure { namespace storage { namespace protocol {
                     {
                         m_directory_path = get_current_element_text();
                     }
+                    else if (current_element_name == xml_file_id)
+                    {
+                        m_directory_file_id = get_current_element_text();
+                    }
                 } while (move_to_next_attribute());
             }
         }
@@ -831,21 +906,15 @@ namespace azure { namespace storage { namespace protocol {
             }
         }
 
-        if (element_name == _XPLATSTR("File"))
-        {
-            m_is_file = true;
-            return;
-        }
-
-        if (element_name == _XPLATSTR("Directory"))
-        {
-            m_is_file = false;
-            return;
-        }
-
         if (element_name == xml_name)
         {
             m_name = get_current_element_text();
+            return;
+        }
+
+        if (element_name == xml_file_id)
+        {
+            m_file_id = get_current_element_text();
             return;
         }
 
@@ -861,15 +930,14 @@ namespace azure { namespace storage { namespace protocol {
         if ((element_name == _XPLATSTR("File") || element_name == _XPLATSTR("Directory")) && get_parent_element_name() == _XPLATSTR("Entries"))
         {
             // End of the data for a file or directory. Create an item and add it to the list
-            if (element_name == _XPLATSTR("File"))
-            {
-                m_is_file = true;
-            }
-            m_items.push_back(list_file_and_directory_item(m_is_file, std::move(m_name), m_size));
+            bool is_file = element_name == _XPLATSTR("File");
+            list_file_and_directory_item new_item(is_file, std::move(m_name), m_size);
+            new_item.set_file_id(std::move(m_file_id));
+            m_items.emplace_back(std::move(new_item));
 
-            m_is_file = false;
             m_name = utility::string_t();
             m_size = 0;
+            m_file_id = utility::string_t();
         }
     }
 
@@ -1024,6 +1092,52 @@ namespace azure { namespace storage { namespace protocol {
         else if (element_name == xml_service_stats_geo_replication_last_sync_time)
         {
             m_service_stats.geo_replication_private().set_last_sync_time(utility::datetime::from_string(get_current_element_text(), utility::datetime::RFC_1123));
+        }
+    }
+
+    std::string user_delegation_key_time_writer::write(const utility::datetime& start, const utility::datetime& expiry)
+    {
+        std::ostringstream outstream;
+        initialize(outstream);
+
+        write_start_element(xml_user_delegation_key_info);
+        write_element(xml_user_delegation_key_start, core::convert_to_iso8601_string(start, 0));
+        write_element(xml_user_delegation_key_expiry, core::convert_to_iso8601_string(expiry, 0));
+        write_end_element();
+
+        finalize();
+        return outstream.str();
+    }
+
+    void user_delegation_key_reader::handle_element(const utility::string_t& element_name)
+    {
+        if (element_name == xml_user_delegation_key_signed_oid)
+        {
+            extract_current_element(m_key.signed_oid);
+        }
+        else if (element_name == xml_user_delegation_key_signed_tid)
+        {
+            extract_current_element(m_key.signed_tid);
+        }
+        else if (element_name == xml_user_delegation_key_signed_start)
+        {
+            m_key.signed_start = utility::datetime::from_string(get_current_element_text(), utility::datetime::ISO_8601);
+        }
+        else if (element_name == xml_user_delegation_key_signed_expiry)
+        {
+            m_key.signed_expiry = utility::datetime::from_string(get_current_element_text(), utility::datetime::ISO_8601);
+        }
+        else if (element_name == xml_user_delegation_key_signed_service)
+        {
+            extract_current_element(m_key.signed_service);
+        }
+        else if (element_name == xml_user_delegation_key_signed_version)
+        {
+            extract_current_element(m_key.signed_version);
+        }
+        else if (element_name == xml_user_delegation_key_value)
+        {
+            extract_current_element(m_key.key);
         }
     }
 

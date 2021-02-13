@@ -20,6 +20,8 @@
 #include "check_macros.h"
 #include "blob_test_base.h"
 
+#include "wascore/util.h"
+
 class basic_always_retry_policy : public azure::storage::basic_retry_policy
 {
 public:
@@ -86,7 +88,7 @@ public:
         });
     }
 
-    ~multi_location_test_helper()
+    ~multi_location_test_helper() noexcept(false)
     {
         m_context.set_sending_request(std::function<void(web::http::http_request&, azure::storage::operation_context)>());
 
@@ -99,7 +101,8 @@ public:
 
             // This check assumes that datetime::to_interval() returns the time in microseconds/10
             std::chrono::microseconds interval((m_context.request_results()[m_context_results_offset + i + 1].start_time().to_interval() - m_context.request_results()[m_context_results_offset + i].end_time().to_interval()) / 10);
-            CHECK(m_retry_info_list[i].retry_interval() < interval);
+            const std::chrono::milliseconds deviation(1);
+            CHECK(m_retry_info_list[i].retry_interval() - deviation < interval);
         }
     }
 
@@ -239,7 +242,7 @@ SUITE(Core)
     {
         for (int i = 0; i < 2; i++)
         {
-            auto index = utility::conversions::print_string(i);
+            auto index = azure::storage::core::convert_to_string(i);
             auto blob = m_container.get_block_blob_reference(_XPLATSTR("blockblob") + index);
 
             blob.upload_text(blob.name(), azure::storage::access_condition(), azure::storage::blob_request_options(), m_context);

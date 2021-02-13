@@ -22,6 +22,9 @@
 #include "wascore/basic_types.h"
 #include "wascore/constants.h"
 
+#pragma push_macro("max")
+#undef max
+
 namespace azure { namespace storage {
 
     class operation_context;
@@ -115,7 +118,7 @@ namespace azure { namespace storage {
         WASTORAGE_API storage_uri(web::http::uri primary_uri, web::http::uri secondary_uri);
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -209,13 +212,28 @@ namespace azure { namespace storage {
         {
         }
 
+        class account_key_credential
+        {
+        public:
+            account_key_credential(std::vector<uint8_t> account_key = std::vector<uint8_t>()) : m_account_key(std::move(account_key))
+            {
+            }
+
+        public:
+            std::vector<uint8_t> m_account_key;
+
+        private:
+            pplx::extensibility::reader_writer_lock_t m_mutex;
+
+            friend class storage_credentials;
+        };
+
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class with the specified account name and key value.
         /// </summary>
         /// <param name="account_name">A string containing the name of the storage account.</param>
         /// <param name="account_key">A string containing the Base64-encoded account access key.</param>
-        storage_credentials(utility::string_t account_name, const utility::string_t& account_key)
-            : m_account_name(std::move(account_name)), m_account_key(utility::conversions::from_base64(account_key))
+        storage_credentials(utility::string_t account_name, const utility::string_t& account_key) : m_account_name(std::move(account_name)), m_account_key_credential(std::make_shared<account_key_credential>(utility::conversions::from_base64(account_key)))
         {
         }
 
@@ -224,27 +242,49 @@ namespace azure { namespace storage {
         /// </summary>
         /// <param name="account_name">A string containing the name of the storage account.</param>
         /// <param name="account_key">An array of bytes that represent the account access key.</param>
-        storage_credentials(utility::string_t account_name, std::vector<uint8_t> account_key)
-            : m_account_name(std::move(account_name)), m_account_key(std::move(account_key))
+        storage_credentials(utility::string_t account_name, std::vector<uint8_t> account_key) : m_account_name(std::move(account_name)), m_account_key_credential(std::make_shared<account_key_credential>(std::move(account_key)))
         {
         }
+
+        class sas_credential
+        {
+        public:
+            explicit sas_credential(utility::string_t sas_token) : m_sas_token(std::move(sas_token))
+            {
+            }
+
+        private:
+            utility::string_t m_sas_token;
+
+            friend class storage_credentials;
+        };
 
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class with the specified shared access signature token.
         /// </summary>
         /// <param name="sas_token">A string containing the shared access signature token.</param>
         explicit storage_credentials(utility::string_t sas_token)
-            : m_sas_token(std::move(sas_token))
+            : storage_credentials(utility::string_t(), sas_credential{sas_token})
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class with the specified account name and shared access signature token.
+        /// </summary>
+        /// <param name="account_name">A string containing the name of the storage account.</param>
+        /// <param name="sas_token">An <see cref="azure::storage::sas_credential" /> containing shared access signature token.</param>
+        storage_credentials(utility::string_t account_name, sas_credential sas_token)
+            : m_account_name(std::move(account_name)), m_sas_token(std::move(sas_token.m_sas_token))
         {
             if (m_sas_token.size() >= 1 && m_sas_token.at(0) == _XPLATSTR('?'))
             {
                 m_sas_token = m_sas_token.substr(1);
             }
-            
+
             auto splitted_query = web::uri::split_query(m_sas_token);
             if (!splitted_query.empty())
             {
-                splitted_query[protocol::uri_query_sas_api_version] = protocol::header_value_storage_version; 
+                splitted_query[protocol::uri_query_sas_api_version] = protocol::header_value_storage_version;
                 web::uri_builder builder;
                 for (const auto& kv : splitted_query)
                 {
@@ -254,17 +294,50 @@ namespace azure { namespace storage {
             }
         }
 
-#if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
-        // have implicitly-declared move constructor and move assignment operator.
+        class bearer_token_credential
+        {
+        public:
+            explicit bearer_token_credential(utility::string_t bearer_token = utility::string_t()) : m_bearer_token(std::move(bearer_token))
+            {
+            }
+
+        public:
+            utility::string_t m_bearer_token;
+
+        private:
+            pplx::extensibility::reader_writer_lock_t m_mutex;
+
+            friend class storage_credentials;
+        };
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class with the specified bearer token.
+        /// </summary>
+        /// <param name="token">A <see cref="azure::storage::storage_credentials::bearer_token_credential" /> class containing bearer token.</param>
+        template<class T, typename std::enable_if<std::is_same<typename std::decay<T>::type, bearer_token_credential>::value>::type* = nullptr>
+        explicit storage_credentials(T&& token) : storage_credentials(utility::string_t(), std::forward<T>(token))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class with the specified account name and bearer token.
+        /// </summary>
+        /// <param name="account_name">A string containing the name of the storage account.</param>
+        /// <param name="token">A <see cref="azure::storage::storage_credentials::bearer_token_credential" /> class containing bearer token.</param>
+        template<class T, typename std::enable_if<std::is_same<typename std::decay<T>::type, bearer_token_credential>::value>::type* = nullptr>
+        storage_credentials(utility::string_t account_name, T&& token) : m_account_name(std::move(account_name)), m_bearer_token_credential(std::make_shared<bearer_token_credential>())
+        {
+            m_bearer_token_credential->m_bearer_token = std::forward<T>(token).m_bearer_token;
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="azure::storage::storage_credentials" /> class based on an existing instance.
         /// </summary>
         /// <param name="other">An existing <see cref="azure::storage::storage_credentials" /> object.</param>
-        storage_credentials(storage_credentials&& other)
+        template<class T, typename std::enable_if<std::is_same<typename std::decay<T>::type, storage_credentials>::value>::type* = nullptr>
+        storage_credentials(T&& other)
         {
-            *this = std::move(other);
+            *this = std::forward<T>(other);
         }
 
         /// <summary>
@@ -272,18 +345,21 @@ namespace azure { namespace storage {
         /// </summary>
         /// <param name="other">An existing <see cref="azure::storage::storage_credentials" /> object to use to set properties.</param>
         /// <returns>An <see cref="azure::storage::storage_credentials" /> object with properties set.</returns>
-        storage_credentials& operator=(storage_credentials&& other)
+        template<class T, typename std::enable_if<std::is_same<typename std::decay<T>::type, storage_credentials>::value>::type* = nullptr>
+        storage_credentials& operator=(T&& other)
         {
             if (this != &other)
             {
-                m_sas_token = std::move(other.m_sas_token);
-                m_sas_token_with_api_version = std::move(other.m_sas_token_with_api_version);
-                m_account_name = std::move(other.m_account_name);
-                m_account_key = std::move(other.m_account_key);
+                m_sas_token = std::forward<T>(other).m_sas_token;
+                m_sas_token_with_api_version = std::forward<T>(other).m_sas_token_with_api_version;
+                m_account_name = std::forward<T>(other).m_account_name;
+                std::atomic_store_explicit(&m_account_key_credential, std::atomic_load_explicit(&other.m_account_key_credential, std::memory_order_acquire), std::memory_order_release);
+                auto key_ptr = std::forward<T>(other).m_account_key_credential;
+                std::atomic_store_explicit(&m_bearer_token_credential, std::atomic_load_explicit(&other.m_bearer_token_credential, std::memory_order_acquire), std::memory_order_release);
+                auto token_ptr = std::forward<T>(other).m_bearer_token_credential;
             }
             return *this;
         }
-#endif
 
         /// <summary>
         /// Transforms a resource URI into a shared access signature URI, by appending a shared access token.
@@ -326,7 +402,79 @@ namespace azure { namespace storage {
         /// <returns>An array of bytes that contains the key.</returns>
         const std::vector<uint8_t>& account_key() const
         {
-            return m_account_key;
+            auto account_key_ptr = std::atomic_load_explicit(&m_account_key_credential, std::memory_order_acquire);
+            pplx::extensibility::scoped_read_lock_t guard(account_key_ptr->m_mutex);
+            return account_key_ptr->m_account_key;
+        }
+
+        /// <summary>
+        /// Sets the account key for the credentials.
+        /// </summary>
+        /// <param name="account_key">A string containing the Base64-encoded account access key.</param>
+        void set_account_key(const utility::string_t& account_key)
+        {
+            set_account_key(utility::conversions::from_base64(account_key));
+        }
+
+        /// <summary>
+        /// Sets the account key for the credentials.
+        /// </summary>
+        /// <param name="account_key">An array of bytes that represent the account access key.</param>
+        void set_account_key(std::vector<uint8_t> account_key)
+        {
+            auto account_key_ptr = std::atomic_load_explicit(&m_account_key_credential, std::memory_order_acquire);
+            if (!account_key_ptr)
+            {
+                auto new_credential = std::make_shared<account_key_credential>();
+                new_credential->m_account_key = std::move(account_key);
+                /* Compares m_account_key_credential and account_key_ptr(nullptr).
+                 * If they are equivalent, assigns new_credential into m_account_key_credential and returns true.
+                 * If they are not equivalent, assigns m_account_key_credential into m_account_key and returns false.
+                 */
+                bool set = std::atomic_compare_exchange_strong_explicit(&m_account_key_credential, &account_key_ptr, new_credential, std::memory_order_release, std::memory_order_acquire);
+                if (set) {
+                    return;
+                }
+                account_key = std::move(new_credential->m_account_key);
+            }
+            pplx::extensibility::scoped_rw_lock_t guard(account_key_ptr->m_mutex);
+            account_key_ptr->m_account_key = std::move(account_key);
+        }
+
+        /// <summary>
+        /// Gets the bearer token for the credentials.
+        /// </summary>
+        /// <returns>The bearer token</returns>
+        utility::string_t bearer_token() const
+        {
+            auto token_ptr = std::atomic_load_explicit(&m_bearer_token_credential, std::memory_order_acquire);
+            pplx::extensibility::scoped_read_lock_t guard(token_ptr->m_mutex);
+            return token_ptr->m_bearer_token;
+        }
+
+        /// <summary>
+        /// Sets the bearer token for the credentials.
+        /// </summary>
+        /// <param name="bearer_token">A string that contains bearer token.</param>
+        void set_bearer_token(utility::string_t bearer_token)
+        {
+            auto token_ptr = std::atomic_load_explicit(&m_bearer_token_credential, std::memory_order_acquire);
+            if (!token_ptr)
+            {
+                auto new_credential = std::make_shared<bearer_token_credential>();
+                new_credential->m_bearer_token = std::move(bearer_token);
+                /* Compares m_bearer_token_credential and token_ptr(nullptr).
+                 * If they are equivalent, assigns new_credential into m_bearer_token_credential and returns true.
+                 * If they are not equivalent, assigns m_bearer_token_credential into token_ptr and returns false.
+                 */
+                bool set = std::atomic_compare_exchange_strong_explicit(&m_bearer_token_credential, &token_ptr, new_credential, std::memory_order_release, std::memory_order_acquire);
+                if (set) {
+                    return;
+                }
+                bearer_token = std::move(new_credential->m_bearer_token);
+            }
+            pplx::extensibility::scoped_rw_lock_t guard(token_ptr->m_mutex);
+            token_ptr->m_bearer_token = std::move(bearer_token);
         }
 
         /// <summary>
@@ -335,7 +483,7 @@ namespace azure { namespace storage {
         /// <returns><c>true</c> if the credentials are for anonymous access; otherwise, <c>false</c>.</returns>
         bool is_anonymous() const
         {
-            return m_sas_token.empty() && m_account_name.empty();
+            return m_sas_token.empty() && !is_account_key() && !is_bearer_token();
         }
 
         /// <summary>
@@ -344,7 +492,7 @@ namespace azure { namespace storage {
         /// <returns><c>true</c> if the credentials are a shared access signature token; otherwise, <c>false</c>.</returns>
         bool is_sas() const
         {
-            return !m_sas_token.empty() && m_account_name.empty();
+            return !m_sas_token.empty() && !is_account_key() && !is_bearer_token();
         }
 
         /// <summary>
@@ -353,7 +501,35 @@ namespace azure { namespace storage {
         /// <returns><c>true</c> if the credentials are a shared key; otherwise, <c>false</c>.</returns>
         bool is_shared_key() const
         {
-            return m_sas_token.empty() && !m_account_name.empty();
+            return m_sas_token.empty() && is_account_key() && !is_bearer_token();
+        }
+
+        /// <summary>
+        /// Indicates whether the credentials are a bearer token.
+        /// </summary>
+        /// <returns><c>true</c> if the credentials are a bearer token; otherwise <c>false</c>.</returns>
+        bool is_bearer_token() const {
+            auto token_ptr = std::atomic_load_explicit(&m_bearer_token_credential, std::memory_order_acquire);
+            if (!token_ptr)
+            {
+                return false;
+            }
+            pplx::extensibility::scoped_read_lock_t guard(token_ptr->m_mutex);
+            return !token_ptr->m_bearer_token.empty();
+        }
+
+        /// <summary>
+        /// Indicates whether the credentials are an account key.
+        /// </summary>
+        /// <returns><c>true</c> if the credentials are an account key; otherwise <c>false</c>.</returns>
+        bool is_account_key() const {
+            auto account_key_ptr = std::atomic_load_explicit(&m_account_key_credential, std::memory_order_acquire);
+            if (!account_key_ptr)
+            {
+                return false;
+            }
+            pplx::extensibility::scoped_read_lock_t guard(account_key_ptr->m_mutex);
+            return !account_key_ptr->m_account_key.empty();
         }
 
     private:
@@ -361,7 +537,240 @@ namespace azure { namespace storage {
         utility::string_t m_sas_token;
         utility::string_t m_sas_token_with_api_version;
         utility::string_t m_account_name;
-        std::vector<uint8_t> m_account_key;
+        // We use std::atomic_{load/store/...} functions specialized for std::shared_ptr<T> to access this member, since std::atomic<std::shared_ptr<T>> is not available until C++20.
+        // These become deprecated since C++20, but still compile.
+        std::shared_ptr<account_key_credential> m_account_key_credential;
+        std::shared_ptr<bearer_token_credential> m_bearer_token_credential;
+    };
+
+    enum class checksum_type
+    {
+        none,
+        md5,
+        sha256,
+        crc64,
+        hmac_sha256,
+    };
+
+    using checksum_none_t = std::integral_constant<checksum_type, checksum_type::none>;
+    using checksum_md5_t = std::integral_constant<checksum_type, checksum_type::md5>;
+    using checksum_sha256_t = std::integral_constant<checksum_type, checksum_type::sha256>;
+    using checksum_crc64_t = std::integral_constant<checksum_type, checksum_type::crc64>;
+    using checksum_hmac_sha256_t = std::integral_constant<checksum_type, checksum_type::hmac_sha256>;
+
+    constexpr auto checksum_none = checksum_none_t();
+    constexpr auto checksum_md5 = checksum_md5_t();
+    constexpr auto checksum_sha256 = checksum_sha256_t();
+    constexpr auto checksum_crc64 = checksum_crc64_t();
+    constexpr auto checksum_hmac_sha256 = checksum_hmac_sha256_t();
+
+    /// <summary>
+    /// Represents a checksum to verify the integrity of data during transport.
+    /// </summary>
+    class checksum
+    {
+    public:
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class without specifying any checksum method.
+        /// </summary>
+        checksum() : checksum(checksum_none)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with MD5 hash value.
+        /// </summary>
+        /// <param name="md5">A string containing base64-encoded MD5.</param>
+        /// <remarks>
+        /// If the provided string is empty, this class is initialized as if checksum method isn't specified.
+        /// </remarks>
+        checksum(utility::string_t md5) : m_type(checksum_type::md5), m_str_hash(std::move(md5))
+        {
+            if (m_str_hash.empty())
+            {
+                m_type = checksum_type::none;
+            }
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with MD5 hash value.
+        /// </summary>
+        /// <param name="md5">A string containing base64-encoded MD5.</param>
+        /// <remarks>
+        /// If the provided string is empty, this class is initialized as if checksum method isn't specified.
+        /// </remarks>
+        checksum(const utility::char_t* md5) : checksum(utility::string_t(md5))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with CRC64 error-detecting code.
+        /// </summary>
+        /// <param name="crc64">An integer containing CRC64 code.</param>
+        checksum(uint64_t crc64) : m_type(checksum_type::crc64), m_crc64(crc64)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class without specifying any checksum method.
+        /// </summary>
+        checksum(checksum_none_t type) : m_type(type.value)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with MD5 hash value.
+        /// </summary>
+        /// <param name="type">Explicitly specified checksum type, must be <see cref="azure::storage::checksum_md5" />.</param>
+        /// <param name="val">A string containing base64-encoded MD5.</param>
+        checksum(checksum_md5_t type, utility::string_t val) : m_type(type.value), m_str_hash(std::move(val))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with SHA-256 hash value.
+        /// </summary>
+        /// <param name="type">Explicitly specified checksum type, must be <see cref="azure::storage::checksum_sha256" />.</param>
+        /// <param name="val">A string containing base64-encoded SHA-256.</param>
+        checksum(checksum_sha256_t type, utility::string_t val) : m_type(type.value), m_str_hash(std::move(val))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with CRC64 error-detecting code.
+        /// </summary>
+        /// <param name="type">Explicitly specified checksum type, must be <see cref="azure::storage::checksum_crc64" />.</param>
+        /// <param name="val">An integer containing CRC64 code.</param>
+        checksum(checksum_crc64_t type, uint64_t val) : m_type(type.value), m_crc64(val)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class with HMAC-SHA256 authentication code.
+        /// </summary>
+        /// <param name="type">Explicitly specified checksum type, must be <see cref="azure::storage::checksum_hmac_sha256" />.</param>
+        /// <param name="val">A string containing base64-encoded HMAC-SHA256 authentication code.</param>
+        checksum(checksum_hmac_sha256_t type, utility::string_t val) : m_type(type.value), m_str_hash(std::move(val))
+        {
+        }
+
+#if defined(_MSC_VER) && _MSC_VER < 1900
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
+        // have implicitly-declared move constructor and move assignment operator.
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::checksum" /> class based on an existing instance.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::checksum" /> object.</param>
+        checksum(checksum&& other)
+        {
+            *this = std::move(other);
+        }
+
+        /// <summary>
+        /// Returns a reference to an <see cref="azure::storage::checksum" /> object.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::checksum" /> object to use to set properties.</param>
+        /// <returns>An <see cref="azure::storage::checksum" /> object with properties set.</returns>
+        checksum& operator=(checksum&& other)
+        {
+            if (this != &other)
+            {
+                m_type = std::move(other.m_type);
+                m_str_hash = std::move(other.m_str_hash);
+                m_crc64 = std::move(other.m_crc64);
+            }
+            return *this;
+        }
+#endif
+
+        /// <summary>
+        /// Indicates whether this is an MD5 checksum.
+        /// </summary>
+        /// <returns><c>true</c> if this is an MD5 checksum; otherwise, <c>false</c>.</returns>
+        bool is_md5() const
+        {
+            return m_type == checksum_type::md5;
+        }
+
+        /// <summary>
+        /// Indicates whether this is an SHA-256 checksum.
+        /// </summary>
+        /// <returns><c>true</c> if this is an SHA-256 checksum; otherwise, <c>false</c>.</returns>
+        bool is_sha256() const
+        {
+            return m_type == checksum_type::sha256;
+        }
+
+        /// <summary>
+        /// Indicates whether this is an HMAC-SHA256 authentication code.
+        /// </summary>
+        /// <returns><c>true</c> if this is an HMAC-SHA256 authentication code; otherwise, <c>false</c>.</returns>
+        bool is_hmac_sha256() const
+        {
+            return m_type == checksum_type::hmac_sha256;
+        }
+
+        /// <summary>
+        /// Indicates whether this is a CRC64 checksum.
+        /// </summary>
+        /// <returns><c>true</c> if this is a CRC64 checksum; otherwise, <c>false</c>.</returns>
+        bool is_crc64() const
+        {
+            return m_type == checksum_type::crc64;
+        }
+
+        /// <summary>
+        /// Indicates whether any checksum method is used.
+        /// </summary>
+        /// <returns><c>true</c> if no checksum method is used; otherwise, <c>false</c>.</returns>
+        bool empty() const
+        {
+            return m_type == checksum_type::none;
+        }
+
+        /// <summary>
+        /// Gets the MD5 checksum.
+        /// </summary>
+        /// <returns>A string containing base64-encoded MD5.</returns>
+        const utility::string_t& md5() const
+        {
+            return m_str_hash;
+        }
+
+        /// <summary>
+        /// Gets the SHA-256 checksum.
+        /// </summary>
+        /// <returns>A string containing base64-encoded SHA-256.</returns>
+        const utility::string_t& sha256() const
+        {
+            return m_str_hash;
+        }
+
+        /// <summary>
+        /// Gets the HMAC-256 authentication code.
+        /// </summary>
+        /// <returns>A string containing base64-encoded HMAC-256 authentiction code.</returns>
+        const utility::string_t& hmac_sha256() const
+        {
+            return m_str_hash;
+        }
+
+        /// <summary>
+        /// Gets the CRC64 error-detecting code.
+        /// </summary>
+        /// <returns>A string containing base64-encoded CRC64 error-detecting code.</returns>
+        utility::string_t crc64() const
+        {
+            std::vector<uint8_t> crc64_str(sizeof(m_crc64) / sizeof(uint8_t));
+            memcpy(crc64_str.data(), &m_crc64, sizeof(m_crc64));
+            return utility::conversions::to_base64(crc64_str);
+        }
+
+    private:
+        checksum_type m_type;
+        utility::string_t m_str_hash;
+        uint64_t m_crc64;
     };
 
     /// <summary>
@@ -389,7 +798,7 @@ namespace azure { namespace storage {
         }
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -454,10 +863,32 @@ namespace azure { namespace storage {
         /// Merges the specified value.
         /// </summary>
         /// <param name="value">The value.</param>
+        void merge(const option_with_default<T>& value)
+        {
+            if (!m_has_value)
+            {
+                *this = value;
+                this->m_has_value = value.has_value();
+            }
+        }
+
+        /// <summary>
+        /// Merges the specified value.
+        /// </summary>
+        /// <param name="value">The value.</param>
         /// <param name="fallback_value">The fallback value.</param>
         void merge(const option_with_default<T>& value, const T& fallback_value)
         {
             merge(value.m_has_value ? (const T&)value : fallback_value);
+        }
+
+        /// <summary>
+        /// Indicates whether a specified value is set.
+        /// </summary>
+        /// <returns>A boolean indicating whether a specified value is set.</retruns>
+        bool has_value() const
+        {
+            return m_has_value;
         }
 
     private:
@@ -493,7 +924,7 @@ namespace azure { namespace storage {
         }
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -570,7 +1001,8 @@ namespace azure { namespace storage {
             : m_is_response_available(false),
             m_target_location(storage_location::unspecified),
             m_http_status_code(0),
-            m_content_length(std::numeric_limits<utility::size64_t>::max())
+            m_content_length(std::numeric_limits<utility::size64_t>::max()),
+            m_request_server_encrypted(false)
         {
         }
 
@@ -585,7 +1017,8 @@ namespace azure { namespace storage {
             m_target_location(target_location),
             m_end_time(utility::datetime::utc_now()),
             m_http_status_code(0),
-            m_content_length(std::numeric_limits<utility::size64_t>::max())
+            m_content_length(std::numeric_limits<utility::size64_t>::max()),
+            m_request_server_encrypted(false)
         {
         }
 
@@ -609,7 +1042,7 @@ namespace azure { namespace storage {
         WASTORAGE_API request_result(utility::datetime start_time, storage_location target_location, const web::http::http_response& response, web::http::status_code http_status_code, storage_extended_error extended_error);
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 r-value reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -639,6 +1072,7 @@ namespace azure { namespace storage {
                 m_request_date = std::move(other.m_request_date);
                 m_content_length = std::move(other.m_content_length);
                 m_content_md5 = std::move(other.m_content_md5);
+                m_content_crc64 = std::move(other.m_content_crc64);
                 m_etag = std::move(other.m_etag);
                 m_request_server_encrypted = other.m_request_server_encrypted;
                 m_extended_error = std::move(other.m_extended_error);
@@ -738,6 +1172,15 @@ namespace azure { namespace storage {
         }
 
         /// <summary>
+        /// Gets the content-CRC64 hash for the request.
+        /// </summary>
+        /// <returns>A string containing the content-CRC64 hash for the request.</returns>
+        const utility::string_t& content_crc64() const
+        {
+            return m_content_crc64;
+        }
+
+        /// <summary>
         /// Gets the ETag for the request.
         /// </summary>
         /// <returns>The ETag for the request.</returns>
@@ -778,6 +1221,7 @@ namespace azure { namespace storage {
         utility::datetime m_request_date;
         utility::size64_t m_content_length;
         utility::string_t m_content_md5;
+        utility::string_t m_content_crc64;
         utility::string_t m_etag;
         bool m_request_server_encrypted;
         storage_extended_error m_extended_error;
@@ -885,13 +1329,14 @@ namespace azure { namespace storage {
         /// <param name="last_request_result">The last request result.</param>
         /// <param name="next_location">The next location to retry.</param>
         /// <param name="current_location_mode">The current location mode.</param>
-        retry_context(int current_retry_count, request_result last_request_result, storage_location next_location, location_mode current_location_mode)
-            : m_current_retry_count(current_retry_count), m_last_request_result(std::move(last_request_result)), m_next_location(next_location), m_current_location_mode(current_location_mode)
+        /// <param name="nonstorage_exception">Exception Ptr of any exception other than storage_exception</param>
+        retry_context(int current_retry_count, request_result last_request_result, storage_location next_location, location_mode current_location_mode, const std::exception_ptr& nonstorage_exception = nullptr)
+            : m_current_retry_count(current_retry_count), m_last_request_result(std::move(last_request_result)), m_next_location(next_location), m_current_location_mode(current_location_mode), m_nonstorage_exception(nonstorage_exception)
         {
         }
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -957,12 +1402,22 @@ namespace azure { namespace storage {
             return m_current_location_mode;
         }
 
+        /// <summary>
+        /// Gets the exception_ptr of any unhandled nonstorage exception during the request.
+        /// Example: WinHttp exceptions for timeout (12002)
+        /// </summary>
+        /// <returns>An <see cref="std::exception_ptr" /> object that represents the nonstorage exception thrown while sending request</returns>
+        const std::exception_ptr& nonstorage_exception() const {
+            return m_nonstorage_exception;
+        }
+
     private:
 
         int m_current_retry_count;
         request_result m_last_request_result;
         storage_location m_next_location;
         location_mode m_current_location_mode;
+        std::exception_ptr m_nonstorage_exception;
     };
 
     /// <summary>
@@ -992,7 +1447,7 @@ namespace azure { namespace storage {
         }
 
 #if defined(_MSC_VER) && _MSC_VER < 1900
-        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+, 
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
         // have implicitly-declared move constructor and move assignment operator.
 
         /// <summary>
@@ -1166,8 +1621,270 @@ namespace azure { namespace storage {
         std::shared_ptr<basic_retry_policy> m_policy;
     };
 
+    /// <summary>
+    /// The lease state of a resource.
+    /// </summary>
+    enum class lease_state
+    {
+        /// <summary>
+        /// The lease state is not specified.
+        /// </summary>
+        unspecified,
+
+        /// <summary>
+        /// The lease is in the Available state.
+        /// </summary>
+        available,
+
+        /// <summary>
+        /// The lease is in the Leased state.
+        /// </summary>
+        leased,
+
+        /// <summary>
+        /// The lease is in the Expired state.
+        /// </summary>
+        expired,
+
+        /// <summary>
+        /// The lease is in the Breaking state.
+        /// </summary>
+        breaking,
+
+        /// <summary>
+        /// The lease is in the Broken state.
+        /// </summary>
+        broken,
+    };
+
+    /// <summary>
+    /// The lease status of a resource.
+    /// </summary>
+    enum class lease_status
+    {
+        /// <summary>
+        /// The lease status is not specified.
+        /// </summary>
+        unspecified,
+
+        /// <summary>
+        /// The resource is locked.
+        /// </summary>
+        locked,
+
+        /// <summary>
+        /// The resource is available to be locked.
+        /// </summary>
+        unlocked
+    };
+
+    /// <summary>
+    /// Specifies the proposed duration of seconds that the lease should continue before it is broken.
+    /// </summary>
+    class lease_break_period
+    {
+    public:
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_break_period" /> class that breaks
+        /// a fixed-duration lease after the remaining lease period elapses, or breaks an infinite lease immediately.
+        /// </summary>
+        lease_break_period()
+            : m_seconds(std::chrono::seconds::max())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_break_period" /> class that breaks
+        /// a lease after the proposed duration.
+        /// </summary>
+        /// <param name="seconds">The proposed duration, in seconds, for the lease before it is broken. Value may
+        /// be between 0 and 60 seconds.</param>
+        lease_break_period(const std::chrono::seconds& seconds)
+            : m_seconds(seconds)
+        {
+            if (seconds != std::chrono::seconds::max())
+            {
+                utility::assert_in_bounds(_XPLATSTR("seconds"), seconds, protocol::minimum_lease_break_period, protocol::maximum_lease_break_period);
+            }
+        }
+
+#if defined(_MSC_VER) && _MSC_VER < 1900
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
+        // have implicitly-declared move constructor and move assignment operator.
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_break_period" /> class based on an existing instance.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::lease_break_period" /> object.</param>
+        lease_break_period(lease_break_period&& other)
+        {
+            *this = std::move(other);
+        }
+
+        /// <summary>
+        /// Returns a reference to an <see cref="azure::storage::lease_break_period" /> object.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::lease_break_period" /> object to use to set properties.</param>
+        /// <returns>An <see cref="azure::storage::lease_break_period" /> object with properties set.</returns>
+        lease_break_period& operator=(lease_break_period&& other)
+        {
+            if (this != &other)
+            {
+                m_seconds = std::move(other.m_seconds);
+            }
+            return *this;
+        }
+#endif
+
+        /// <summary>
+        /// Indicates whether the <see cref="azure::storage::lease_break_period" /> object is valid.
+        /// </summary>
+        /// <returns><c>true</c> if the <see cref="azure::storage::lease_break_period" /> object is valid; otherwise, <c>false</c>.</returns>
+        bool is_valid() const
+        {
+            return m_seconds < std::chrono::seconds::max();
+        }
+
+        /// <summary>
+        /// Gets the proposed duration for the lease before it is broken.
+        /// </summary>
+        /// <returns>The proposed proposed duration for the lease before it is broken, in seconds.</returns>
+        const std::chrono::seconds& seconds() const
+        {
+            return m_seconds;
+        }
+
+    private:
+
+        std::chrono::seconds m_seconds;
+    };
+
+    /// <summary>
+    /// The lease duration for a Blob service resource.
+    /// </summary>
+    enum class lease_duration
+    {
+        /// <summary>
+        /// The lease duration is not specified.
+        /// </summary>
+        unspecified,
+
+        /// <summary>
+        /// The lease duration is finite.
+        /// </summary>
+        fixed,
+
+        /// <summary>
+        /// The lease duration is infinite.
+        /// </summary>
+        infinite,
+    };
+
+    /// <summary>
+    /// Specifies the duration of the lease.
+    /// </summary>
+    class lease_time
+    {
+    public:
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_time" /> class that never expires.
+        /// </summary>
+        lease_time()
+            : m_seconds(-1)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_time" /> class that expires after the
+        /// specified duration.
+        /// </summary>
+        /// <param name="seconds">The duration of the lease in seconds. For a non-infinite lease, this value can be
+        /// between 15 and 60 seconds.</param>
+        lease_time(const std::chrono::seconds& seconds)
+            : m_seconds(seconds)
+        {
+            if (seconds.count() != -1)
+            {
+                utility::assert_in_bounds(_XPLATSTR("seconds"), seconds, protocol::minimum_fixed_lease_duration, protocol::maximum_fixed_lease_duration);
+            }
+        }
+
+#if defined(_MSC_VER) && _MSC_VER < 1900
+        // Compilers that fully support C++ 11 rvalue reference, e.g. g++ 4.8+, clang++ 3.3+ and Visual Studio 2015+,
+        // have implicitly-declared move constructor and move assignment operator.
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="azure::storage::lease_time" /> class based on an existing instance.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::lease_time" /> object.</param>
+        lease_time(lease_time&& other)
+        {
+            *this = std::move(other);
+        }
+
+        /// <summary>
+        /// Returns a reference to an <see cref="azure::storage::lease_time" /> object.
+        /// </summary>
+        /// <param name="other">An existing <see cref="azure::storage::lease_time" /> object to use to set properties.</param>
+        /// <returns>An <see cref="azure::storage::lease_time" /> object with properties set.</returns>
+        lease_time& operator=(lease_time&& other)
+        {
+            if (this != &other)
+            {
+                m_seconds = std::move(other.m_seconds);
+            }
+            return *this;
+        }
+#endif
+
+        /// <summary>
+        /// Gets the duration of the lease in seconds for a non-infinite lease.
+        /// </summary>
+        /// <returns>The duration of the lease.</returns>
+        const std::chrono::seconds& seconds() const
+        {
+            return m_seconds;
+        }
+
+    private:
+
+        std::chrono::seconds m_seconds;
+    };
+
+#ifdef _WIN32
+    /// <summary>
+    /// Interface for scheduling tasks that start after a provided delay in milliseconds
+    /// </summary>
+    struct __declspec(novtable) delayed_scheduler_interface
+    {
+        virtual void schedule_after(pplx::TaskProc_t function, void* context, long long delayInMs) = 0;
+    };
+
+    /// <summary>
+    /// Sets the ambient scheduler to be used by the PPL constructs. Note this is not thread safe.
+    /// </summary>
+    WASTORAGE_API void __cdecl set_wastorage_ambient_scheduler(const std::shared_ptr<pplx::scheduler_interface>& scheduler);
+
+    /// <summary>
+    /// Gets the ambient scheduler to be used by the PPL constructs. Note this is not thread safe.
+    /// </summary>
+    WASTORAGE_API const std::shared_ptr<pplx::scheduler_interface> __cdecl get_wastorage_ambient_scheduler();
+
+    /// <summary>
+    /// Sets the ambient scheduler to be used for scheduling delayed tasks. Note this is not thread safe.
+    /// </summary>
+    WASTORAGE_API void __cdecl set_wastorage_ambient_delayed_scheduler(const std::shared_ptr<delayed_scheduler_interface>& scheduler);
+
+    /// <summary>
+    /// Gets the ambient scheduler to be used for scheduling delayed tasks. Note this is not thread safe.
+    /// </summary>
+    WASTORAGE_API const std::shared_ptr<delayed_scheduler_interface>& __cdecl get_wastorage_ambient_delayed_scheduler();
+#endif
+
 }} // namespace azure::storage
 
 #ifndef _WIN32
 #define UNREFERENCED_PARAMETER(P) (P)
 #endif
+
+#pragma pop_macro("max")
